@@ -398,13 +398,16 @@ button:hover{opacity:.92}
 .dashboard-card .card-sub{font-size:10.5px;color:var(--text-dim)}
 
 /* TOAST */
-.toast-container{position:fixed;top:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+.toast-container{position:fixed;top:96px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-height:calc(100vh - 116px);overflow:hidden;pointer-events:none}
+.toast-container .toast{pointer-events:auto}
+@media(max-width:768px){.toast-container{top:64px;right:10px;left:10px}.toast-container .toast{max-width:none}}
 #font-size-widget{position:fixed;right:14px;top:8px;z-index:9500;display:flex;align-items:center;gap:3px;background:var(--bg-panel);border-radius:8px;padding:3px 6px;box-shadow:0 2px 8px rgba(0,0,0,.25);border:1px solid var(--line);opacity:.7;transition:opacity .2s}#font-size-widget:hover{opacity:1}
 #font-size-widget button{background:var(--bg-panel-alt);border:1px solid var(--line);color:var(--text-mid);border-radius:4px;width:22px;height:22px;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:'Noto Sans Thai',sans-serif;transition:background .15s}
 #font-size-widget button:hover{background:var(--gold-dim);}
 #font-size-widget .fsw-label{color:var(--text-mid);font-size:10px;padding:0 3px;min-width:28px;text-align:center;font-family:'IBM Plex Mono',monospace}
 @media(max-width:768px){#font-size-widget{right:8px;top:6px;padding:2px 4px}#font-size-widget button{width:20px;height:20px;font-size:10px}}
-.toast{padding:10px 16px;border-radius:8px;font-size:12px;font-weight:500;animation:slideIn .3s ease,fadeOut .3s ease 2.7s forwards;max-width:300px;box-shadow:0 4px 20px rgba(0,0,0,.4)}
+.toast{padding:10px 16px;border-radius:8px;font-size:12px;font-weight:500;animation:slideIn .3s ease;max-width:300px;box-shadow:0 4px 20px rgba(0,0,0,.4);display:flex;align-items:center;gap:8px}
+.toast .toast-count{flex-shrink:0;background:rgba(0,0,0,.18);border-radius:999px;font-size:10px;font-weight:800;padding:1px 7px;line-height:1.5}
 .toast.success{background:var(--green-dim);color:var(--green);border:1px solid var(--green)}.toast.error{background:var(--red-dim);color:var(--red);border:1px solid var(--red)}.toast.info{background:var(--blue-dim);color:var(--blue);border:1px solid var(--blue)}
 @keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
 @keyframes fadeOut{to{opacity:0;transform:translateX(100%)}}
@@ -1726,11 +1729,34 @@ function makeSearchableSelect(options,cfg){
   input.value=labelOf(_value);
   return root;
 }
+// กันแจ้งเตือนข้อความซ้ำๆ ซ้อนกันเป็นตับ (เช่นตอนออฟไลน์แล้วบันทึกถี่ๆ จะเด้ง "ไม่ได้เชื่อมต่อ Supabase" ซ้ำรัวๆ จนบังหน้าจอ)
+// ถ้าเจอข้อความเดิม+ประเภทเดิมที่ยังค้างอยู่ ให้ต่ออายุ+ขึ้นตัวนับแทน ไม่ซ้อนใบใหม่ และจำกัดจำนวนที่แสดงพร้อมกันไว้ไม่ให้รกจอ
+function dismissToast(t){
+  if(!t||!t.parentNode) return;
+  t.style.animation='fadeOut .22s ease forwards';
+  setTimeout(function(){ if(t.parentNode) t.remove(); },230);
+}
 function toast(msg,type){
   type=type||'info';
+  var container=document.getElementById('toast-container');
+  if(!container) return;
+  var existing=null;
+  for(var i=0;i<container.children.length;i++){ var c=container.children[i]; if(c.dataset.msg===msg&&c.dataset.type===type){ existing=c; break; } }
+  if(existing){
+    clearTimeout(existing._toastTimer);
+    var n=(parseInt(existing.dataset.count,10)||1)+1;
+    existing.dataset.count=String(n);
+    var countEl=existing.querySelector('.toast-count');
+    if(!countEl){ countEl=el('span',{className:'toast-count'},['×'+n]); existing.appendChild(countEl); }
+    else countEl.textContent='×'+n;
+    existing._toastTimer=setTimeout(function(){ dismissToast(existing); },3000);
+    return;
+  }
   var t=el('div',{className:'toast '+type},[msg]);
-  document.getElementById('toast-container').appendChild(t);
-  setTimeout(function(){ t.remove(); },3000);
+  t.dataset.msg=msg; t.dataset.type=type; t.dataset.count='1';
+  container.appendChild(t);
+  while(container.children.length>4){ var oldest=container.firstChild; clearTimeout(oldest._toastTimer); oldest.remove(); }
+  t._toastTimer=setTimeout(function(){ dismissToast(t); },3000);
 }
 function ledDot(status,size){
   size=size||10;
@@ -1989,23 +2015,6 @@ var UTIL_DAILY_TABS=[
 function machineUtilAccessibleTabs(){
   return UTIL_DAILY_TABS.filter(function(t){ return userHasPageAccess('machineUtilDaily'+(t.key==='head'?'Head':'Thread')); });
 }
-// คัดลอกข้อมูลของ "เมื่อวาน" (ล็อต/สถานะเดินเครื่องแต่ละกะ) มาใส่วันนี้ ยกเว้นตัวเลขผลิตจริง (投入數/生産(kg)/不良數) ที่ต้องกรอกใหม่ทุกวัน
-function copyPreviousDayUtil(year,month,day,machineCodes){
-  var prevD=addDays(new Date(year,month,day),-1);
-  var py=prevD.getFullYear(), pm=prevD.getMonth(), pd=prevD.getDate();
-  var copied=0;
-  (machineCodes||[]).forEach(function(code){
-    SHIFTS.forEach(function(sh){
-      var lotVal=sdGet(py,pm,pd,code,sh.key+'Lot');
-      var stVal=sdGet(py,pm,pd,code,sh.key+'Status');
-      if(lotVal) state.machineUtil[sdKey(year,month,day,code,sh.key+'Lot')]=lotVal;
-      if(stVal) state.machineUtil[sdKey(year,month,day,code,sh.key+'Status')]=stVal;
-    });
-    copied++;
-  });
-  saveMachineUtil();
-  return copied;
-}
 function holidayKey(year,month,day){ return 'holiday:'+year+'-'+String(month+1).padStart(2,'0')+'-'+String(day).padStart(2,'0'); }
 function isHoliday(year,month,day){ return !!state.machineUtil[holidayKey(year,month,day)]; }
 function setHoliday(year,month,day,val){ state.machineUtil[holidayKey(year,month,day)]=!!val; debouncedMachineUtilSave(); }
@@ -2044,7 +2053,7 @@ function machineDayKgPcs(year,month,day,code){
   var kg=parseFloat(sdGet(year,month,day,code,'prodKg'))||0;
   var weights=[];
   SHIFTS.forEach(function(sh){
-    var lot=sdGet(year,month,day,code,sh.key+'Lot');
+    var lot=sdGetCarry(year,month,day,code,sh.key+'Lot');
     var w=findInventoryUnitWeight(lot);
     if(w) weights.push(w);
   });
@@ -2287,6 +2296,19 @@ function sdKey(year,month,day,code,field){
   return 'sd:'+year+'-'+String(month+1).padStart(2,'0')+'-'+String(day).padStart(2,'0')+':'+code+':'+field;
 }
 function sdGet(year,month,day,code,field){ return (state.machineUtil[sdKey(year,month,day,code,field)])||''; }
+// ดึงค่าล่าสุดที่เคยบันทึกจริง (เดิน/รอ, เลขล็อต) ย้อนไปวันก่อนหน้า ถ้าวันนี้ยังไม่มีใครกรอก — จะได้ไม่ต้องกดคัดลอกเองทุกวัน
+// (แต่ถ้าวันนี้เคยกด "บันทึก" ไว้แล้วแม้จะเป็นค่าว่าง ก็ถือว่าตั้งใจแล้ว ไม่ย้อนไปเอาของเก่ามาทับ)
+function sdRaw(year,month,day,code,field){ var k=sdKey(year,month,day,code,field); return Object.prototype.hasOwnProperty.call(state.machineUtil,k)?state.machineUtil[k]:undefined; }
+function sdGetCarry(year,month,day,code,field,maxBack){
+  maxBack=(maxBack===undefined)?120:maxBack;
+  var d=new Date(year,month,day);
+  for(var i=0;i<=maxBack;i++){
+    var v=sdRaw(d.getFullYear(),d.getMonth(),d.getDate(),code,field);
+    if(v!==undefined) return v||'';
+    d=addDays(d,-1);
+  }
+  return '';
+}
 function sdSet(year,month,day,code,field,val){
   state.machineUtil[sdKey(year,month,day,code,field)]=val;
   debouncedMachineUtilSave();
@@ -2295,7 +2317,7 @@ function month_day_str(day){ return String(day)+'日'; }
 function machineShiftSummary(year,month,day,code){
   var run=false,chg=false,wait=false,brk=false,stop=false,hours=0,anySet=false;
   SHIFTS.forEach(function(sh){
-    var sv=sdGet(year,month,day,code,sh.key+'Status')||'';
+    var sv=sdGetCarry(year,month,day,code,sh.key+'Status')||'';
     if(sv) anySet=true;
     if(sv.indexOf('เดิน')>=0||sv.indexOf('稼動')>=0){ run=true; hours+=(sh.hours||0); }
     else if(sv.indexOf('故障')>=0||sv.indexOf('เสีย')>=0) brk=true;
@@ -2383,20 +2405,11 @@ function renderMachineUtilDaily(container){
   jumpWrap.appendChild(jumpDate);
   dateBar.appendChild(jumpWrap);
   var exportBtn=el('button',{className:'btn-export'},['⬇ Export CSV']);
-  exportBtn.addEventListener('click',function(){ exportDailyUtil(year,month,day,activeTab.groups); });
+  exportBtn.addEventListener('click',function(){ exportDailyUtil(year,month,day); });
   dateBar.appendChild(exportBtn);
   var exportYearBtn=el('button',{className:'btn-export',style:'background:var(--gold-dim);color:#7a5c00;border-color:var(--gold);'},['📅 Export สรุปรายปี']);
-  exportYearBtn.addEventListener('click',function(){ exportYearlySummary(year,activeTab.groups); });
+  exportYearBtn.addEventListener('click',function(){ exportYearlySummary(year); });
   dateBar.appendChild(exportYearBtn);
-  var copyPrevBtn=el('button',{className:'btn-secondary',style:'font-size:11px;padding:4px 10px;border-color:var(--teal);color:var(--teal);'},['📋 คัดลอกจากเมื่อวาน / 複製昨天']);
-  copyPrevBtn.title='คัดลอกล็อต/สถานะเดินเครื่องแต่ละกะจากเมื่อวาน (เฉพาะแท็บ'+activeTab.label+' ที่กำลังดูอยู่) — ไม่คัดลอกจำนวนผลิต (投入數/生産/不良數) ต้องกรอกใหม่ทุกวัน';
-  copyPrevBtn.addEventListener('click',function(){
-    if(!confirm('คัดลอกล็อต/สถานะเดินเครื่องของเมื่อวาน มาทับของวันนี้ (เฉพาะแท็บ'+activeTab.label+') — ยกเว้นจำนวนผลิตที่ต้องกรอกใหม่ทุกวัน\n\nยืนยันหรือไม่?')) return;
-    var machinesInTab=MACHINE_LIST.concat(state.machineListCustom||[]).filter(function(m){ return m.code.indexOf('GF')<0 && activeTab.groups.indexOf(groupKeyFromCode(m.code))>=0; }).map(function(m){return m.code;});
-    var n=copyPreviousDayUtil(year,month,day,machinesInTab);
-    render(); toast('คัดลอกข้อมูลจากเมื่อวานแล้ว ('+n+' เครื่อง) — ตรวจสอบ/ปรับแก้แล้วอย่าลืมกรอกจำนวนผลิตของวันนี้ด้วย','success');
-  });
-  dateBar.appendChild(copyPrevBtn);
   var toMonthlyBtn=el('button',{className:'btn-secondary',style:'font-size:11px;padding:4px 10px;border-color:var(--navy);color:var(--navy);'},['📊 ดูรายงานเดือนนี้ / 查看月報']);
   toMonthlyBtn.addEventListener('click',function(){ state.currentPage='machineUtilMonthly'; saveSettings(); render(); });
   dateBar.appendChild(toMonthlyBtn);
@@ -2411,11 +2424,10 @@ function renderMachineUtilDaily(container){
     dateBar.appendChild(holToggle);
   }
   container.appendChild(dateBar);
-  var allMachines=MACHINE_LIST.concat(state.machineListCustom||[])
-
-    .filter(function(m){ return m.code.indexOf('GF')<0 && activeTab.groups.indexOf(groupKeyFromCode(m.code))>=0; });
+  // ตัวเลขสรุป/稼動率% ด้านบน ให้คิดรวมทุกเครื่องเหมือนเดิม (ไม่แยกตามแท็บ) — แยกตามแท็บเฉพาะตารางกรอกข้อมูลด้านล่าง (allMachines) เพื่อให้แผนกใครแผนกมันกรอกง่าย ไม่ปนกัน
+  var summaryMachines=MACHINE_LIST.concat(state.machineListCustom||[]).filter(function(m){ return m.code.indexOf('GF')<0; });
   var runCount=0,breakCount=0,waitCount=0,changeCount=0,totalInput=0,totalProdKg=0,totalDefects=0,totalRunHrs=0;
-  allMachines.forEach(function(m){
+  summaryMachines.forEach(function(m){
     var ms=machineShiftSummary(year,month,day,m.code);
     if(ms.run) runCount++;
     else if(ms.brk) breakCount++;
@@ -2427,7 +2439,9 @@ function renderMachineUtilDaily(container){
     totalProdKg+=parseFloat(sdGet(year,month,day,m.code,'prodKg'))||0;
     totalDefects+=parseFloat(sdGet(year,month,day,m.code,'defects'))||0;
   });
-  var total=allMachines.length;
+  var total=summaryMachines.length;
+  var allMachines=MACHINE_LIST.concat(state.machineListCustom||[])
+    .filter(function(m){ return m.code.indexOf('GF')<0 && activeTab.groups.indexOf(groupKeyFromCode(m.code))>=0; });
   var yieldRate=totalInput>0?(totalProdKg/totalInput*100):0;
   var totalPossibleHrs=total*STD_HOURS_PER_MACHINE;
   var utilRate=totalPossibleHrs>0?(totalRunHrs/totalPossibleHrs*100):0;
@@ -2587,9 +2601,13 @@ function renderMachineUtilDaily(container){
     if(m.name) codeTd.appendChild(el('div',{style:'font-size:9px;color:var(--text-dim);max-width:80px;overflow:hidden;text-overflow:ellipsis;'},[m.name]));
     tr.appendChild(codeTd);
     SHIFTS.forEach(function(sh){
-      var lotVal=sdGet(year,month,day,m.code,sh.key+'Lot');
-      var stVal=sdGet(year,month,day,m.code,sh.key+'Status')||'เดิน/稼動';
-      var lotInp=el('input',{type:'text',value:lotVal,placeholder:'—',style:'width:120px;font-size:11px;'});
+      // ยังไม่มีใครกรอกของวันนี้ → ดึงล็อต/สถานะล่าสุดที่เคยกรอกไว้มาโชว์เป็นค่าตั้งต้นให้เลย (ไม่ต้องกดคัดลอกเอง) แล้วค่อยแก้เฉพาะเครื่องที่เปลี่ยนไปจากเดิม
+      var lotTouchedToday=sdRaw(year,month,day,m.code,sh.key+'Lot')!==undefined;
+      var stTouchedToday=sdRaw(year,month,day,m.code,sh.key+'Status')!==undefined;
+      var lotVal=sdGetCarry(year,month,day,m.code,sh.key+'Lot');
+      var stVal=sdGetCarry(year,month,day,m.code,sh.key+'Status')||'เดิน/稼動';
+      var lotInp=el('input',{type:'text',value:lotVal,placeholder:'—',style:'width:120px;font-size:11px;'+(lotTouchedToday?'':'font-style:italic;opacity:.75;')});
+      if(!lotTouchedToday&&lotVal) lotInp.title='ค่าจากวันก่อนหน้า (ยังไม่ได้ยืนยันของวันนี้) — พิมพ์ทับได้เลยถ้าเปลี่ยน';
       var lotWrap=el('div',{});
       lotInp.addEventListener('change',function(){ state.machineUtil[sdKey(year,month,day,m.code,sh.key+'Lot')]=lotInp.value; debouncedMachineUtilSave(); render(); });
       lotWrap.appendChild(lotInp);
@@ -2607,7 +2625,8 @@ function renderMachineUtilDaily(container){
         }
       }
       var shStatusColors={'เดิน/稼動':'var(--green)','改機/ปรับ':'var(--amber)','等待/รอ':'var(--blue)','故障/เสีย':'var(--red)','หยุด/停止':'var(--text-dim)'};
-      var stSel2=el('select',{style:'width:92px;font-size:11px;color:'+(shStatusColors[stVal]||'var(--green)')+';font-weight:600;'});
+      var stSel2=el('select',{style:'width:92px;font-size:11px;color:'+(shStatusColors[stVal]||'var(--green)')+';font-weight:600;'+(stTouchedToday?'':'border-style:dashed;opacity:.8;')});
+      if(!stTouchedToday) stSel2.title='ค่าจากวันก่อนหน้า (ยังไม่ได้ยืนยันของวันนี้) — เปลี่ยนได้เลยถ้าวันนี้ไม่เหมือนเดิม';
       ['เดิน/稼動','改機/ปรับ','等待/รอ','故障/เสีย','หยุด/停止'].forEach(function(s){ var op=el('option',{value:s},[s]); if(s===stVal) op.selected=true; stSel2.appendChild(op); });
       stSel2.addEventListener('change',function(){ state.machineUtil[sdKey(year,month,day,m.code,sh.key+'Status')]=stSel2.value; debouncedMachineUtilSave(); render(); });
       tr.appendChild(el('td',{style:'padding:2px 4px;border-left:2px solid var(--line);'},[lotWrap]));
@@ -2661,7 +2680,7 @@ function exportDailyUtil(year,month,day,groupFilter){
   var rows=summaryRows.concat([headers]);
   allMachines.forEach(function(m){
     var row=[m.code,m.name||'',m.th||''];
-    SHIFTS.forEach(function(sh){ row.push(sdGet(year,month,day,m.code,sh.key+'Lot')||''); row.push(sdGet(year,month,day,m.code,sh.key+'Status')||''); });
+    SHIFTS.forEach(function(sh){ row.push(sdGetCarry(year,month,day,m.code,sh.key+'Lot')||''); row.push(sdGetCarry(year,month,day,m.code,sh.key+'Status')||''); });
     var inp=parseFloat(sdGet(year,month,day,m.code,'input'))||0;
     var def=parseFloat(sdGet(year,month,day,m.code,'defects'))||0;
     var yr=inp>0?((inp-def)/inp*100).toFixed(1)+'%':'';
@@ -5690,7 +5709,7 @@ function shipmentTypeColor(type){
   return map[type]||'var(--green)';
 }
 // ทุกครั้งที่ Outsource "รับกลับ" ลังมา ให้แยกเป็น "รอบ" ของตัวเอง ไปโผล่ที่หน้าตรวจสอบสำเร็จเป็นการ์ดคนละใบ (เลขออเดอร์/ล็อตเดิม) แล้วเดินหน้าต่อในกระบวนการถัดไปแยกกันไปตลอดทั้งสาย
-function createRoundOrder(parentOrder,receiveQty,receiveDate,receiveWeight){
+function createRoundOrder(parentOrder,receiveQty,receiveDate,receiveWeight,sourceShipmentId){
   var finalIdx=parentOrder.processes.findIndex(function(pp){ return isFinalInspectionProc(pp); });
   if(finalIdx<0) return null;
   var remainingProcs=parentOrder.processes.slice(finalIdx);
@@ -5703,9 +5722,21 @@ function createRoundOrder(parentOrder,receiveQty,receiveDate,receiveWeight){
   clonedProcs.forEach(function(cp,i){ cp.planDate=planDates[i]; cp.planStart=(i===0)?receiveDate:dateToStr(addDays(strToDate(planDates[i-1]),1)); });
   // หมายเหตุ: orderDate ของ "รอบ" นี้ ยึดตามวันลงออเดอร์ของออเดอร์แม่เหมือนเดิม (ให้หาเจอในเดือนเดียวกับออเดอร์แม่เสมอ ตามที่ต้องการ)
   // ส่วนปัญหาเดิม (รับกลับแล้วไม่โผล่ที่ตรวจสอบสำเร็จ) แก้ด้วยการเลื่อนปฏิทินของหน้าไปเดือน/ปีของออเดอร์แม่ให้อัตโนมัติทันทีที่สร้าง "รอบ" สำเร็จ (ดูจุดที่เรียก createRoundOrder)
-  var roundOrder={id:uid(),orderNo:parentOrder.orderNo,orderDate:parentOrder.orderDate,dueDate:parentOrder.dueDate,quantity:parentOrder.quantity,lotNo:parentOrder.lotNo||'',productId:parentOrder.productId,productName:parentOrder.productName,productCode:parentOrder.productCode,productDetail:parentOrder.productDetail,customerId:parentOrder.customerId,needNylon:parentOrder.needNylon,sortingType:parentOrder.sortingType,roundOfOrderId:parentOrder.id,roundNo:roundNo,roundBoxQty:receiveQty,roundBoxWeight:receiveWeight||null,note:'รอบ '+roundNo+' — รับกลับจาก Outsource '+fmtNum(receiveQty)+' ลัง'+(receiveWeight?(' / '+fmtNum(receiveWeight)+' กก.'):'')+' (วันที่รับ '+fmtShort(receiveDate)+')',processes:clonedProcs};
+  var roundOrder={id:uid(),orderNo:parentOrder.orderNo,orderDate:parentOrder.orderDate,dueDate:parentOrder.dueDate,quantity:parentOrder.quantity,lotNo:parentOrder.lotNo||'',productId:parentOrder.productId,productName:parentOrder.productName,productCode:parentOrder.productCode,productDetail:parentOrder.productDetail,customerId:parentOrder.customerId,needNylon:parentOrder.needNylon,sortingType:parentOrder.sortingType,roundOfOrderId:parentOrder.id,roundNo:roundNo,roundBoxQty:receiveQty,roundBoxWeight:receiveWeight||null,sourceShipmentId:sourceShipmentId||null,note:'รอบ '+roundNo+' — รับกลับจาก Outsource '+fmtNum(receiveQty)+' ลัง'+(receiveWeight?(' / '+fmtNum(receiveWeight)+' กก.'):'')+' (วันที่รับ '+fmtShort(receiveDate)+')',processes:clonedProcs};
   state.orders.unshift(roundOrder);
   return roundOrder;
+}
+// เมื่อตัดสินผลตรวจของ "รอบ" ที่เกิดจากการรับกลับ Outsource แล้ว ให้ย้อนไปอัพเดตสถานะ "รอตัดสิน" ในประวัติ ส่ง-รับ ของ Outsource (ออเดอร์แม่) ให้ตรงกันด้วย
+// ไม่งั้นรายการ "รับกลับ" ที่หน้า Outsource จะค้างสถานะ "รอตัดสินที่ตรวจสอบสำเร็จ" ตลอดไป ทั้งที่จริงๆ ตัดสินไปแล้ว
+function markSourceShipmentJudged(order,result){
+  if(!order||!order.roundOfOrderId||!order.sourceShipmentId) return;
+  var parentOrder=state.orders.find(function(x){return x.id===order.roundOfOrderId;});
+  if(!parentOrder) return;
+  var outIdx=parentOrder.processes.findIndex(function(pp){return isOutsourceProc(pp);});
+  if(outIdx<0) return;
+  var outProc=parentOrder.processes[outIdx];
+  var srcEntry=(outProc.shipments||[]).find(function(s){return s.id===order.sourceShipmentId;});
+  if(srcEntry){ srcEntry.judged=!!result; srcEntry.judgedResult=result||null; }
 }
 function roundBadgeEl(o){
   if(!o.roundNo) return null;
@@ -5735,7 +5766,11 @@ function renderShipmentLogBlock(card,p,rerenderFn,order){
       tr.appendChild(el('td',{className:'mono',style:'padding:5px 8px;color:var(--text-mid);'},[entry.weight?fmtNum(entry.weight):'-']));
       var judgeTd=el('td',{style:'padding:5px 8px;font-size:10.5px;'});
       if(entry.type==='receive'){
-        if(entry.judged) judgeTd.appendChild(el('span',{style:'color:'+(entry.judgedResult==='NG'?'var(--red)':'var(--green)')+';font-weight:600;'},['ตัดสินแล้ว '+(entry.judgedResult||'OK')]));
+        if(entry.judged){
+          var jColor=entry.judgedResult==='NG'?'var(--red)':(entry.judgedResult==='MIXED'?'var(--amber)':(entry.judgedResult==='SCRAP'?'var(--text-dim)':'var(--green)'));
+          var jLabel={NG:'ไม่ผ่าน',OK:'ผ่าน',SCRAP:'ทิ้ง/สแครป',MIXED:'ผ่านบางส่วน'}[entry.judgedResult]||entry.judgedResult||'OK';
+          judgeTd.appendChild(el('span',{style:'color:'+jColor+';font-weight:600;'},['✓ ตัดสินแล้ว — '+jLabel]));
+        }
         else judgeTd.appendChild(el('span',{style:'color:var(--amber);font-weight:600;'},['รอตัดสินที่ตรวจสอบสำเร็จ']));
       } else judgeTd.appendChild(el('span',{style:'color:var(--text-dim);'},['-']));
       tr.appendChild(judgeTd);
@@ -5906,6 +5941,9 @@ function renderProcessTable(procTable,thName,tcName,key,opts){
         } else {
           p.qcResult='SCRAP'; p.actualDate=todayStr();
         }
+        // อัพเดตสถานะ "รอตัดสิน" ที่ประวัติ Outsource ของออเดอร์แม่ให้ตรงกับผลตัดสินจริง (กันค้างเป็น "รอตัดสิน" ตลอดไป)
+        var judgeLabel=(okQ>0&&ngQ<=0&&scrapQ<=0)?'OK':(ngQ>0&&okQ<=0&&scrapQ<=0)?'NG':(scrapQ>0&&okQ<=0&&ngQ<=0)?'SCRAP':'MIXED';
+        markSourceShipmentJudged(o,judgeLabel);
         saveOrders(); renderProcessTable(procTable,thName,tcName,key,opts);
         toast(msg,'success');
       }
@@ -5936,6 +5974,7 @@ function renderProcessTable(procTable,thName,tcName,key,opts){
     } else if(opts.finalInspection){ var resultSel=el('select',{}); [['','-'],['OK','OK'],['NG','NG'],['SCRAP','🗑 ทิ้ง/สแครป']].forEach(function(opt){ var o2=el('option',{value:opt[0]},[opt[1]]); if((p.qcResult||'')===opt[0]) o2.selected=true; resultSel.appendChild(o2); }); resultSel.addEventListener('change',function(){
       if(resultSel.value==='OK'){
         p.qcResult='OK'; p.actualDate=todayStr();
+        if(isRoundOrder) markSourceShipmentJudged(o,'OK');
         saveOrders(); renderProcessTable(procTable,thName,tcName,key,opts);
         toast('บันทึกสำเร็จ — ย้ายไปขั้นตอนถัดไปแล้ว','success');
       }
@@ -5948,6 +5987,7 @@ function renderProcessTable(procTable,thName,tcName,key,opts){
             var parentOut=parentOrder.processes[parentOutIdx];
             parentOut.shipments=parentOut.shipments||[];
             parentOut.shipments.push({id:uid(),type:'send',qty:o.roundBoxQty||0,weight:o.roundBoxWeight||null,date:todayStr(),note:'ส่งกลับไปแก้ไข (NG จากตรวจสอบสำเร็จ รอบ '+(o.roundNo||'-')+')'});
+            markSourceShipmentJudged(o,'NG');
             saveOrders(); toast('บันทึก NG แล้ว — ส่งกลับไปที่ประวัติ Outsource ของออเดอร์ต้นทางให้แล้ว ('+parentOrder.orderNo+')','info');
           } else { saveOrders(); toast('บันทึก NG แล้ว','info'); }
         } else { saveOrders(); toast('บันทึก NG แล้ว','info'); }
@@ -5960,6 +6000,7 @@ function renderProcessTable(procTable,thName,tcName,key,opts){
         if(scrapNote!==null) p.note=scrapNote;
         if(isRoundOrder){
           var parentOrderS=state.orders.find(function(x){return x.id===o.roundOfOrderId;});
+          markSourceShipmentJudged(o,'SCRAP');
           if(parentOrderS){ closeOutsourceProcessForOrder(parentOrderS,o.roundBoxQty||0,o.roundBoxWeight||null,'ทิ้ง/สแครป '+fmtNum(o.roundBoxQty||0)+' ลัง'+(o.roundBoxWeight?(' / '+fmtNum(o.roundBoxWeight)+' กก.'):'')+' (จากตรวจสอบสำเร็จ รอบ '+(o.roundNo||'-')+')'+(p.note?(' — '+p.note):'')); saveOrders(); toast('บันทึกทิ้ง/สแครปแล้ว — ปิดงาน Outsource ของ '+parentOrderS.orderNo+' แล้ว','info'); }
           else { saveOrders(); toast('บันทึกทิ้ง/สแครปแล้ว','info'); }
         } else {
@@ -5968,7 +6009,7 @@ function renderProcessTable(procTable,thName,tcName,key,opts){
         }
         renderProcessTable(procTable,thName,tcName,key,opts);
       }
-      else { p.qcResult=''; p.actualDate=null; saveOrders(); renderProcessTable(procTable,thName,tcName,key,opts); }
+      else { p.qcResult=''; p.actualDate=null; if(isRoundOrder) markSourceShipmentJudged(o,null); saveOrders(); renderProcessTable(procTable,thName,tcName,key,opts); }
     }); fields.appendChild(proField('ผลตรวจ/檢驗結果',resultSel)); }
     fields.appendChild(proField('วันแผน/計劃',el('div',{className:'mono',style:'font-size:11.5px;color:var(--text-mid);padding-top:3px;'},[fmtShort(p.planDate)])));
     if(opts.finalInspection){ var dateInp=el('input',{type:'date',value:p.actualDate||''}); dateInp.addEventListener('change',function(){ p.actualDate=dateInp.value||null; saveOrders(); renderProcessTable(procTable,thName,tcName,key,opts); toast('บันทึกวันที่ตรวจเช็คสำเร็จ','success'); }); fields.appendChild(proField('วันจริง/實際',dateInp)); }
@@ -5979,7 +6020,7 @@ function renderProcessTable(procTable,thName,tcName,key,opts){
     card.appendChild(fields);
     var acts=el('div',{style:'display:flex;align-items:center;gap:8px;flex-wrap:wrap;'});
     if(item.status==='blocked'){ acts.appendChild(el('span',{style:'font-size:10.5px;color:#999;'},['⛔ ถูกบล็อก'])); } else if(!p.actualDate){ var doneBtn=el('button',{className:'btn-success',style:'font-size:11.5px;'},['✓ เสร็จ / 完成']); doneBtn.addEventListener('click',function(){ p.actualDate=todayStr(); saveOrders(); renderProcessTable(procTable,thName,tcName,key,opts); toast('บันทึกสำเร็จ — ย้ายไปขั้นตอนถัดไปแล้ว','success'); }); acts.appendChild(doneBtn);
-    } else { var clrBtn=el('button',{className:'btn-danger',style:'font-size:10.5px;'},['↩ เผลอกด? กดยกเลิก / 撤銷']); clrBtn.addEventListener('click',function(){ if(!confirm('ยกเลิกสถานะเสร็จของขั้นตอนนี้ และดึงงานกลับมาที่หน้านี้?')) return; p.actualDate=null; saveOrders(); renderProcessTable(procTable,thName,tcName,key,opts); toast('ยกเลิกสำเร็จ — งานกลับมาที่หน้านี้แล้ว','info'); }); acts.appendChild(clrBtn); }
+    } else { var clrBtn=el('button',{className:'btn-danger',style:'font-size:10.5px;'},['↩ เผลอกด? กดยกเลิก / 撤銷']); clrBtn.addEventListener('click',function(){ if(!confirm('ยกเลิกสถานะเสร็จของขั้นตอนนี้ และดึงงานกลับมาที่หน้านี้?')) return; p.actualDate=null; if(opts.finalInspection&&isRoundOrder&&p.qcResult==='OK'){ p.qcResult=''; markSourceShipmentJudged(o,null); } saveOrders(); renderProcessTable(procTable,thName,tcName,key,opts); toast('ยกเลิกสำเร็จ — งานกลับมาที่หน้านี้แล้ว','info'); }); acts.appendChild(clrBtn); }
     card.appendChild(acts);
     list.appendChild(card);
   });
@@ -6299,9 +6340,10 @@ function openQuickShipmentModal(order,procIdx,type,outTable){
     var liveOrder=state.orders.find(function(o2){return o2.id===order.id;})||order;
     var liveP=(liveOrder.processes&&liveOrder.processes[procIdx])||p;
     liveP.shipments=liveP.shipments||[];
-    liveP.shipments.push({id:uid(),type:type,qty:qty,weight:weight||null,date:entryDate,note:noteIn.value.trim()});
+    var newShipmentId=uid();
+    liveP.shipments.push({id:newShipmentId,type:type,qty:qty,weight:weight||null,date:entryDate,note:noteIn.value.trim()});
     if(isReceive){
-      var roundOrder=createRoundOrder(liveOrder,qty,entryDate,weight);
+      var roundOrder=createRoundOrder(liveOrder,qty,entryDate,weight,newShipmentId);
       if(roundOrder){
         var groupD=strToDate(roundOrder.orderDate||roundOrder.dueDate);
         if(groupD){ state.currentYear=groupD.getFullYear(); state.currentMonth=groupD.getMonth(); }
@@ -6374,8 +6416,8 @@ function showOutsourceModal(order,procIdx,outTable){
     var epQ=parseNumInput(epQtyIn.value);
     var epW=parseNumInput(epWeightIn.value);
     if(epIn.value&&epQ&&epQ>0){
-      liveP.shipments=liveP.shipments||[]; liveP.shipments.push({id:uid(),type:'receive',qty:epQ,weight:epW||null,date:epIn.value,note:'บันทึกจากป็อปอิพแก้ไข Outsource'});
-      var roundOrder=createRoundOrder(liveOrder,epQ,epIn.value,epW);
+      liveP.shipments=liveP.shipments||[]; var newEpShipmentId=uid(); liveP.shipments.push({id:newEpShipmentId,type:'receive',qty:epQ,weight:epW||null,date:epIn.value,note:'บันทึกจากป็อปอิพแก้ไข Outsource'});
+      var roundOrder=createRoundOrder(liveOrder,epQ,epIn.value,epW,newEpShipmentId);
       if(roundOrder){
         // เลื่อนตัวกรองเดือน/ปีของหน้าให้ตรงกับวันที่รับกลับ ไม่งั้นถ้าไปเปิดหน้าตรวจสอบสำเร็จทีหลัง (ยังอยู่เดือน/ปีเดิมที่ค้างไว้) จะไม่เห็นรอบใหม่นี้เลย
         var groupD=strToDate(roundOrder.orderDate||roundOrder.dueDate);
