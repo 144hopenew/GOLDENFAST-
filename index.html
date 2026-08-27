@@ -482,6 +482,28 @@ select,input[type="text"],input[type="number"],input[type="date"]{min-height:34p
 .kpcs-sub{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-dim);margin-top:2px}
 .report-total-row td{background:#eef6ff!important;font-weight:700;color:var(--text-hi)}
 .report-note{font-size:11px;color:var(--text-dim);line-height:1.55;margin-top:8px}
+
+/* ===== My Tasks / งานของฉัน ===== */
+.my-tasks-hero{background:linear-gradient(135deg,var(--bg-panel),var(--bg-panel-alt));border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px;position:relative;overflow:hidden}
+.my-tasks-hero:before{content:'';position:absolute;inset:0 auto 0 0;width:4px;background:linear-gradient(180deg,var(--accent),var(--accent-2))}
+.my-tasks-hero-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.my-tasks-greeting{font-size:20px;font-weight:800;color:var(--text-hi)}
+.my-tasks-sub{font-size:11px;color:var(--text-dim);margin-top:4px}
+.my-tasks-count{font-family:'IBM Plex Mono',monospace;font-size:28px;font-weight:800;color:var(--accent)}
+.my-task-list{display:flex;flex-direction:column;gap:9px}
+.my-task-card{background:var(--bg-panel);border:1px solid var(--line);border-radius:12px;padding:13px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+.my-task-card:hover{transform:translateY(-1px);border-color:var(--accent);box-shadow:0 6px 18px var(--glow-soft)}
+.my-task-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:var(--bg-panel-alt);font-size:19px;flex:0 0 38px}
+.my-task-main{min-width:0;flex:1}
+.my-task-title{font-size:13px;font-weight:800;color:var(--text-hi)}
+.my-task-meta{font-size:10.5px;color:var(--text-dim);margin-top:4px;line-height:1.55}
+.my-task-action{font-size:11px;font-weight:800;color:var(--accent);white-space:nowrap}
+.my-task-badge{font-size:9.5px;font-weight:800;padding:3px 7px;border-radius:999px;white-space:nowrap}
+.my-task-empty{padding:30px 16px;text-align:center;border:1px dashed var(--line);border-radius:12px;color:var(--text-dim);font-size:12px}
+.my-task-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.my-task-tab{border:1px solid var(--line);background:var(--bg-panel);color:var(--text-mid);border-radius:8px;padding:7px 10px;font-size:11px;cursor:pointer}
+.my-task-tab.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+@media(max-width:600px){.my-tasks-hero{padding:15px}.my-task-card{padding:11px}.my-task-action{font-size:10px}.my-task-count{font-size:24px}}
 </style>
 </head>
 <body>
@@ -1090,7 +1112,7 @@ var YEARS=[2026];
 var STATUS_COLOR={ontime:'var(--green)',late:'var(--red)',overdue:'var(--amber)',progress:'var(--blue)',pending:'var(--line)',completed:'var(--green)','completed-late':'var(--red)',delayed:'var(--red)',ng:'var(--gold)',blocked:'#000000',scrap:'#666666'};
 var STATUS_LABEL={ontime:'ตรงแผน / 準時',late:'ล่าช้า / 延遲',overdue:'เสี่ยงล่าช้า / 逾期風險',progress:'กำลังทำ / 進行中',pending:'ยังไม่เริ่ม / 待處理',completed:'เสร็จแล้ว / 已完成','completed-late':'เสร็จล่าช้า / 完成延遲',delayed:'ล่าช้า / 延遲',ng:'งานมีปัญหา / 產品有問題',blocked:'ถูกบล็อก รอแก้ไข NG / 被阻擋',scrap:'ทิ้ง/สแครป / 報廢'};
 var POS_LABEL={admin:'ผู้จัดการ / 管理員',supervisor:'หัวหน้างาน / 主管',operator:'พนักงาน / 作業員',qc:'QC / 品管',warehouse:'คลังสินค้า / 倉庫'};
-var ALL_PAGE_KEYS=['dashboard','orders','customerOrders','monthlyReport','machines','machineUtilDaily','machineUtilDailyHead','machineUtilDailyThread','machineUtilMonthly','tools','inventory','rawMaterials','purchaseOrders','head','thread','outsource','finalInspection','sizeSorting','nylon','sorting','packing','warehouse','products','control','alertCenter','digitalMap','scrapReport','settings','auditLog'];
+var ALL_PAGE_KEYS=['myTasks','dashboard','orders','customerOrders','monthlyReport','machines','machineUtilDaily','machineUtilDailyHead','machineUtilDailyThread','machineUtilMonthly','tools','inventory','rawMaterials','purchaseOrders','head','thread','outsource','finalInspection','sizeSorting','nylon','sorting','packing','warehouse','products','control','alertCenter','digitalMap','scrapReport','settings','auditLog'];
 // หมายเหตุ: machineUtilDailyHead / machineUtilDailyThread ไม่ใช่หน้าเมนูแยก (ไม่มีใน NAV_PAGES) — เป็นสิทธิ์ย่อยของหน้า稼動率รายวันหน้าเดียว
 // ใช้กำหนดว่าแต่ละคนจะเห็นแท็บ "หัว" และ/หรือ "เกลียว" (รวม套華司) ในหน้านั้นได้บ้าง ต้องมีสิทธิ์ machineUtilDaily หลักด้วยถึงจะเข้าหน้าได้
 // ── Page permission levels: 'edit' = ดู+แก้ไขได้, 'view' = ดูอย่างเดียว, absent/'none' = เข้าไม่ได้ ──
@@ -1098,7 +1120,7 @@ function pagePermsFromKeys(keys,level){ var o={}; (keys||[]).forEach(function(k)
 var DEFAULT_USERS=[
   {id:'u1',username:'admin',password:'admin123',role:'admin',name:'ผู้จัดการ',pagePerms:pagePermsFromKeys(ALL_PAGE_KEYS,'edit')},
   {id:'u2',username:'supervisor',password:'sup123',role:'supervisor',name:'หัวหน้างาน',pagePerms:pagePermsFromKeys(ALL_PAGE_KEYS.filter(function(k){return k!=='settings'&&k!=='auditLog';}),'edit')},
-  {id:'u3',username:'operator',password:'op123',role:'operator',name:'พนักงาน',pagePerms:pagePermsFromKeys(['dashboard','head','thread','outsource','finalInspection','sizeSorting','nylon','sorting','packing','warehouse'],'edit')}
+  {id:'u3',username:'operator',password:'op123',role:'operator',name:'พนักงาน',pagePerms:pagePermsFromKeys(['myTasks','dashboard','head','thread','outsource','finalInspection','sizeSorting','nylon','sorting','packing','warehouse'],'edit')}
 ];
 var DEFAULT_MASTER=[
   {id:'m1',name:'หัว / 頭部加工',tc:'頭部加工',days:2},
@@ -1499,6 +1521,7 @@ function userPageLevel(pageKey){
   if(!u) return 'edit';
   if(u.role==='admin') return 'edit';
   var pp=u.pagePerms||{};
+  if(pageKey==='myTasks' && (u.role==='supervisor'||u.role==='operator'||u.role==='qc'||u.role==='warehouse')) return 'edit';
   return pp[pageKey]||'none';
 }
 function userHasPageAccess(pageKey){ return userPageLevel(pageKey)!=='none'; }
@@ -1507,6 +1530,7 @@ function firstAllowedPage(){
   var u=state.currentUser&&state.users.find(function(x){return x.id===state.currentUser.id;});
   if(!u||u.role==='admin') return 'dashboard';
   var pp=u.pagePerms||{};
+  if(pp.myTasks&&pp.myTasks!=='none') return 'myTasks';
   if(pp.dashboard&&pp.dashboard!=='none') return 'dashboard';
   var firstKey=ALL_PAGE_KEYS.find(function(k){ return pp[k]&&pp[k]!=='none'; });
   return firstKey||'dashboard';
@@ -4725,6 +4749,108 @@ function printPurchaseOrder(po){
   w.document.open();
   w.document.write('<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><title></title><style>'+css+'</style></head><body>'+body+'<script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script></body></html>');
   w.document.close();
+}
+
+
+function taskRoleForProcess(p){
+  if(!p) return null;
+  if(isFinalInspectionProc(p)) return 'qc';
+  if(p.name && (p.name.indexOf('เข้าคลัง')>=0 || p.name.indexOf('入倉')>=0)) return 'warehouse';
+  if(isHeadProc(p)||isThreadProc(p)||isOutsourceProc(p)||isPackingProc(p)) return 'operator';
+  if(p.name && (p.name.indexOf('คัด')>=0||p.name.indexOf('篩選')>=0||p.name.indexOf('ไนล่อน')>=0||p.name.indexOf('耐落')>=0)) return 'operator';
+  return 'operator';
+}
+function myTaskRoleMatches(taskRole,userRole){
+  if(userRole==='admin'||userRole==='supervisor') return true;
+  return taskRole===userRole;
+}
+function getMyTasks(){
+  if(!state.currentUser) return [];
+  var role=state.currentUser.role;
+  var out=[];
+  (state.orders||[]).forEach(function(o){
+    if(!o.processes) return;
+    var pending=getPendingIndex(o);
+    if(pending<0) return;
+    var indexes=[];
+    if(pending>=0){ indexes.push(pending); var pp=o.processes[pending], nxt=o.processes[pending+1];
+      if(isHeadProc(pp)&&isThreadProc(nxt)&&!nxt.actualDate&&nxt.qcResult!=='NG') indexes.push(pending+1);
+    }
+    indexes.forEach(function(idx){
+      var p=o.processes[idx]; if(!p) return;
+      var taskRole=taskRoleForProcess(p);
+      if(!myTaskRoleMatches(taskRole,role)) return;
+      var ng=p.qcResult==='NG';
+      var overdue=!ng&&p.planDate&&p.planDate<todayStr()&&!p.actualDate;
+      var status=ng?'ng':(overdue?'overdue':'progress');
+      out.push({id:o.id+'_'+idx,order:o,proc:p,idx:idx,role:taskRole,status:status});
+    });
+  });
+  out.sort(function(a,b){
+    var rank={ng:0,overdue:1,progress:2};
+    if(rank[a.status]!==rank[b.status]) return rank[a.status]-rank[b.status];
+    return (a.proc.planDate||'9999-99-99').localeCompare(b.proc.planDate||'9999-99-99');
+  });
+  return out;
+}
+function myTaskTargetPage(p){
+  if(isHeadProc(p)) return 'head';
+  if(isThreadProc(p)) return 'thread';
+  if(isOutsourceProc(p)) return 'outsource';
+  if(isFinalInspectionProc(p)) return 'finalInspection';
+  if(isPackingProc(p)) return 'packing';
+  if(p.name&&(p.name.indexOf('เข้าคลัง')>=0||p.name.indexOf('入倉')>=0)) return 'warehouse';
+  if(p.name&&(p.name.indexOf('คัดขนาด')>=0||p.name.indexOf('大小分揀')>=0)) return 'sizeSorting';
+  if(p.name&&(p.name.indexOf('ไนล่อน')>=0||p.name.indexOf('耐落')>=0)) return 'nylon';
+  if(p.name&&(p.name.indexOf('คัดกรอง')>=0||p.name.indexOf('篩選')>=0)) return 'sorting';
+  return 'control';
+}
+function renderMyTasks(container){
+  var tasks=getMyTasks();
+  var roleLabel=POS_LABEL[state.currentUser.role]||state.currentUser.role;
+  var hero=el('div',{className:'my-tasks-hero'});
+  var top=el('div',{className:'my-tasks-hero-top'});
+  var left=el('div');
+  left.appendChild(el('div',{className:'my-tasks-greeting'},['สวัสดี, '+(state.currentUser.name||'')+' 👋']));
+  left.appendChild(el('div',{className:'my-tasks-sub'},[roleLabel+' · งานที่ระบบส่งมาให้คุณ / 系統分配給您的工作']));
+  top.appendChild(left);
+  top.appendChild(el('div',{style:'text-align:right;'},[el('div',{className:'my-tasks-count'},[String(tasks.length)]),el('div',{className:'my-tasks-sub'},['งานที่ต้องทำ / 待處理'])]));
+  hero.appendChild(top); container.appendChild(hero);
+  var tabs=el('div',{className:'my-task-tabs'});
+  var tabAll=el('button',{className:'my-task-tab active'},['ทั้งหมด / 全部']);
+  var tabUrgent=el('button',{className:'my-task-tab'},['🔴 ต้องรีบทำ / 優先']);
+  tabs.appendChild(tabAll); tabs.appendChild(tabUrgent); container.appendChild(tabs);
+  var list=el('div',{className:'my-task-list'}); container.appendChild(list);
+  function draw(filterUrgent){
+    list.innerHTML='';
+    var arr=filterUrgent?tasks.filter(function(t){return t.status==='ng'||t.status==='overdue';}):tasks;
+    if(!arr.length){ list.appendChild(el('div',{className:'my-task-empty'},[filterUrgent?'ไม่มีงานเร่งด่วน 🎉':'ตอนนี้ไม่มีงานที่ต้องทำ 🎉 / 目前沒有待處理工作'])); return; }
+    arr.forEach(function(t){
+      var o=t.order,p=t.proc;
+      var icon=isFinalInspectionProc(p)?'🔬':(isOutsourceProc(p)?'🚚':(isPackingProc(p)?'📦':(isHeadProc(p)?'⚙️':(isThreadProc(p)?'🔩':(p.name.indexOf('เข้าคลัง')>=0?'🏭':'📝')))));
+      var statusText=t.status==='ng'?'NG — ต้องแก้ไข':(t.status==='overdue'?'เลยกำหนด':'รอดำเนินการ');
+      var statusColor=t.status==='ng'?'var(--red)':(t.status==='overdue'?'var(--amber)':'var(--blue)');
+      var card=el('div',{className:'my-task-card'});
+      card.appendChild(el('div',{className:'my-task-icon'},[icon]));
+      var main=el('div',{className:'my-task-main'});
+      main.appendChild(el('div',{className:'my-task-title'},[p.name||'งาน']));
+      var meta=(o.orderNo||'-')+' · '+(o.productName||'-');
+      if(o.lotNo) meta+=' · LOT '+o.lotNo;
+      if(p.planDate) meta+=' · กำหนด '+fmtShortY(p.planDate);
+      main.appendChild(el('div',{className:'my-task-meta'},[meta]));
+      card.appendChild(main);
+      card.appendChild(el('span',{className:'my-task-badge',style:'background:'+statusColor+'1f;color:'+statusColor+';'},[statusText]));
+      card.appendChild(el('span',{className:'my-task-action'},['เปิดงาน →']));
+      card.addEventListener('click',function(){
+        var d=strToDate(o.orderDate||o.dueDate); if(d){state.currentYear=d.getFullYear();state.currentMonth=d.getMonth();}
+        state.currentPage=myTaskTargetPage(p); state.expandedOrder=o.id; state.controlSearch=o.orderNo||''; saveSettings(); updatePresencePage(); render();
+      });
+      list.appendChild(card);
+    });
+  }
+  tabAll.addEventListener('click',function(){tabAll.classList.add('active');tabUrgent.classList.remove('active');draw(false);});
+  tabUrgent.addEventListener('click',function(){tabUrgent.classList.add('active');tabAll.classList.remove('active');draw(true);});
+  draw(false);
 }
 
 function renderDashboard(container){
@@ -7972,6 +8098,7 @@ function exportMonthlyReport(){
 function countOpenAtDay(year,month,day){ var end=dateToStr(new Date(year,month,day)), total=0; state.orders.forEach(function(o){ var od=o.orderDate||o.dueDate; if(od&&od<=end){ var done=completedOrderDate(o); if(!done||done>end) total+=kpcs(o.quantity); } }); return total; }
 
 var NAV_PAGES=[
+  {key:'myTasks',label:'งานของฉัน',tc:'我的工作',group:'งานของฉัน',ic:'✅'},
   {key:'dashboard',label:'Dashboard',tc:'儀表板',group:'ภาพรวม',ic:'📊'},
   {key:'orders',label:'ใบแจ้งการผลิต',tc:'製令單',group:'ภาพรวม',ic:'📋'},
   {key:'customerOrders',label:'ออเดอร์ลูกค้า',tc:'客戶訂單',group:'ภาพรวม',ic:'🧾'},
@@ -8105,6 +8232,7 @@ function render(){
     body.appendChild(el('div',{className:'view-only-banner'},['👁 โหมดดูอย่างเดียว — คุณไม่มีสิทธิ์แก้ไขหน้านี้ / 唯讀模式，您沒有此頁面的編輯權限']));
   }
   switch(state.currentPage){
+    case 'myTasks': renderMyTasks(body); break;
     case 'dashboard': renderDashboard(body); break;
     case 'orders': renderOrderList(body); break;
     case 'customerOrders': try{ renderCustomerOrders(body); }catch(e){ body.appendChild(el('div',{style:'color:var(--red);padding:20px;font-family:monospace;border:1px solid var(--red);border-radius:8px;margin:20px;'},['Customer Orders Error: '+e.message])); console.error('renderCustomerOrders error',e); } break;
@@ -8148,7 +8276,7 @@ function render(){
 }
 // ทางลัดที่ "อยากให้" ขึ้นก่อนถ้าผู้ใช้มีสิทธิ์เข้าหน้านั้น — ถ้าคนนี้ไม่มีสิทธิ์เข้าหน้าไหนในนี้เลย
 // ระบบจะดึงหน้าอื่นที่เขามีสิทธิ์เข้าได้จริงมาแทนอัตโนมัติ (เรียงตามลำดับเมนูปกติ) จะได้ไม่เจอแถบว่างๆ
-var QUICK_NAV_PREFERRED=['dashboard','orders','control','finalInspection'];
+var QUICK_NAV_PREFERRED=['myTasks','dashboard','control','finalInspection'];
 function buildMobileQuickNav(){
   var bar=el('div',{className:'mobile-quicknav'});
   var accessible=NAV_PAGES.filter(function(p){ return userHasPageAccess(p.key); });
