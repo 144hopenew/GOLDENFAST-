@@ -1007,9 +1007,9 @@ function reconcileOutsourceRoundStatus(){
     (outProc.shipments||[]).forEach(function(entry){
       if(entry.type!=='receive') return;
       var round=rounds.find(function(o){ return o.sourceShipmentId===entry.id; });
-      var finalProc=round&&round.processes&&round.processes[0];
+      var finalProc=round&&finalInspectionProcOf(round);
       var result=null;
-      if(finalProc){
+      if(finalProc&&!(round&&round.needsFinalDecision)){
         if(finalProc.qcResult==='NG') result='NG';
         else if(finalProc.qcResult==='SCRAP') result='SCRAP';
         else if(finalProc.qcResult==='OK'||finalProc.actualDate) result='OK';
@@ -1596,7 +1596,6 @@ function firstAllowedPage(){
   var u=state.currentUser&&state.users.find(function(x){return x.id===state.currentUser.id;});
   if(!u||u.role==='admin') return 'dashboard';
   var pp=u.pagePerms||{};
-  if(pp.myTasks&&pp.myTasks!=='none') return 'myTasks';
   if(pp.dashboard&&pp.dashboard!=='none') return 'dashboard';
   var firstKey=ALL_PAGE_KEYS.find(function(k){ return pp[k]&&pp[k]!=='none'; });
   return firstKey||'dashboard';
@@ -4926,7 +4925,7 @@ function renderDashboard(container){
   renderYearMonthSelector(container,null);
   var atRisk=getAtRiskOrders();
   var lowStock=getLowStockRawMaterials();
-  if(atRisk.length||lowStock.length){
+  if(false&&(atRisk.length||lowStock.length)){
     var alertPanel=el('div',{className:'panel',style:'border-left:4px solid var(--red);margin-bottom:14px;'});
     alertPanel.appendChild(el('div',{className:'panel-title',style:'color:var(--red);'},['🔔 ต้องติดตามด่วน / 需緊急關注']));
     if(atRisk.length){
@@ -5929,6 +5928,17 @@ function markSourceShipmentJudged(order,result){
   var outProc=parentOrder.processes[outIdx];
   var srcEntry=(outProc.shipments||[]).find(function(s){return s.id===order.sourceShipmentId;});
   if(srcEntry){ srcEntry.judged=!!result; srcEntry.judgedResult=result||null; }
+  order.needsFinalDecision=!result;
+}
+// ข้อมูลรอบเก่าบางใบสร้างเส้นทางผิดลำดับ แต่ถ้ารายการรับกลับต้นทางยัง "รอตัดสิน"
+// ต้องดึงเข้าหน้าตรวจสำเร็จเพื่อให้ QC ตัดสินได้เสมอ แทนการปล่อยให้การ์ดหาย
+function roundAwaitingFinalDecision(order){
+  if(!order||!order.roundOfOrderId||!order.sourceShipmentId) return false;
+  var parent=state.orders.find(function(o){ return o.id===order.roundOfOrderId; });
+  if(!parent) return false;
+  var outProc=(parent.processes||[]).find(function(p){ return isOutsourceProc(p); });
+  var receipt=outProc&&(outProc.shipments||[]).find(function(s){ return s.id===order.sourceShipmentId&&s.type==='receive'; });
+  return !!(receipt&&(!receipt.judged||order.needsFinalDecision));
 }
 function roundBadgeEl(o){
   if(!o.roundNo) return null;
@@ -6046,7 +6056,7 @@ function splitOrderForward(order,procIdx,onSuccess){
 function renderProcessTable(procTable,thName,tcName,key,opts){
   opts=opts||{}; if(!procTable) return; procTable.innerHTML='';
   var showDone=!!state.procShowDone[key];
-  var items=[]; state.orders.forEach(function(o){ var idx=o.processes.findIndex(function(p){return p.name.indexOf(thName)>=0||p.name.indexOf(tcName)>=0;}); if(idx<0) return; if(!stepReached(o,idx)) return; var st=statusOf(o,idx); if(!showDone&&isDoneStatus(st)) return;
+  var items=[]; state.orders.forEach(function(o){ var idx=o.processes.findIndex(function(p){return p.name.indexOf(thName)>=0||p.name.indexOf(tcName)>=0;}); if(idx<0) return; var legacyPending=(key==='finalInspection'&&roundAwaitingFinalDecision(o)); if(!stepReached(o,idx)&&!legacyPending) return; var st=legacyPending?'progress':statusOf(o,idx); if(!showDone&&isDoneStatus(st)) return;
     // ตัวกรองเดือนไม่เหมาะกับงานที่ยังค้างอยู่หลังกระบวนการ Outsource (lead time ของ Outsource ยาว/ไม่แน่นอน ทำให้ของไปถึงขั้นตอนหลังๆ ข้ามเดือนไปจากวันลงออเดอร์ได้เสมอ)
     // เลยให้ทุกหน้าหลัง Outsource (ตรวจสำเร็จ/คัดขนาด/คัดกรอง/ไนล่อน/แพ็ค/เข้าคลัง — opts.postOutsource) โชว์งานที่ยังไม่เสร็จเสมอ ไม่ว่าจะเปิดดูเดือนไหนอยู่ พองานเสร็จแล้วค่อยกลับไปยึดเดือนตามปกติ (ไม่โผล่ค้างเป็นลิสต์ยาวไม่รู้จบ)
     if(opts.postOutsource){
@@ -6117,7 +6127,7 @@ function renderProcessTable(procTable,thName,tcName,key,opts){
       var rtDateInp=el('input',{type:'date',value:p.returnDate||''}); rtDateInp.addEventListener('change',function(){ p.returnDate=rtDateInp.value||null; saveOrders(); toast('บันทึกวันที่กลับมาสำเร็จ','success'); }); fields.appendChild(proField('วันที่กลับมา/送回日期',rtDateInp));
     }
     var isRoundOrder=!!o.roundOfOrderId;
-    if(opts.finalInspection&&isRoundOrder&&!p.actualDate&&p.qcResult!=='NG'){
+    if(opts.finalInspection&&isRoundOrder&&roundAwaitingFinalDecision(o)){
       var total=o.roundBoxQty||0;
       var totalW=o.roundBoxWeight||0;
       var quickWrap=el('div',{style:'margin-bottom:10px;'});
@@ -6400,8 +6410,9 @@ function outsourceRoundsSummary(parentOrder){
   var rounds=state.orders.filter(function(o){ return o.roundOfOrderId===parentOrder.id; });
   var passed=0,ng=0,pending=0,passedBoxQty=0;
   rounds.forEach(function(r){
-    var fi=r.processes[0];
-    if(fi&&fi.qcResult==='NG'){ ng++; }
+    var fi=finalInspectionProcOf(r);
+    if(roundAwaitingFinalDecision(r)){ pending++; }
+    else if(fi&&fi.qcResult==='NG'){ ng++; }
     else if(fi&&fi.qcResult==='SCRAP'){ /* ตัดสินแล้ว แต่ไม่ใช่งานผ่าน */ }
     else if(fi&&fi.actualDate){ passed++; passedBoxQty+=(r.roundBoxQty||0); }
     else pending++;
@@ -8191,7 +8202,6 @@ function exportMonthlyReport(){
 function countOpenAtDay(year,month,day){ var end=dateToStr(new Date(year,month,day)), total=0; state.orders.forEach(function(o){ var od=o.orderDate||o.dueDate; if(od&&od<=end){ var done=completedOrderDate(o); if(!done||done>end) total+=kpcs(o.quantity); } }); return total; }
 
 var NAV_PAGES=[
-  {key:'myTasks',label:'งานของฉัน',tc:'我的工作',group:'งานของฉัน',ic:'✅'},
   {key:'dashboard',label:'Dashboard',tc:'儀表板',group:'ภาพรวม',ic:'📊'},
   {key:'orders',label:'ใบแจ้งการผลิต',tc:'製令單',group:'ภาพรวม',ic:'📋'},
   {key:'customerOrders',label:'ออเดอร์ลูกค้า',tc:'客戶訂單',group:'ภาพรวม',ic:'🧾'},
@@ -8325,7 +8335,7 @@ function render(){
     body.appendChild(el('div',{className:'view-only-banner'},['👁 โหมดดูอย่างเดียว — คุณไม่มีสิทธิ์แก้ไขหน้านี้ / 唯讀模式，您沒有此頁面的編輯權限']));
   }
   switch(state.currentPage){
-    case 'myTasks': renderMyTasks(body); break;
+    case 'myTasks': state.currentPage='dashboard'; saveSettings(); renderDashboard(body); break;
     case 'dashboard': renderDashboard(body); break;
     case 'orders': renderOrderList(body); break;
     case 'customerOrders': try{ renderCustomerOrders(body); }catch(e){ body.appendChild(el('div',{style:'color:var(--red);padding:20px;font-family:monospace;border:1px solid var(--red);border-radius:8px;margin:20px;'},['Customer Orders Error: '+e.message])); console.error('renderCustomerOrders error',e); } break;
@@ -8369,7 +8379,7 @@ function render(){
 }
 // ทางลัดที่ "อยากให้" ขึ้นก่อนถ้าผู้ใช้มีสิทธิ์เข้าหน้านั้น — ถ้าคนนี้ไม่มีสิทธิ์เข้าหน้าไหนในนี้เลย
 // ระบบจะดึงหน้าอื่นที่เขามีสิทธิ์เข้าได้จริงมาแทนอัตโนมัติ (เรียงตามลำดับเมนูปกติ) จะได้ไม่เจอแถบว่างๆ
-var QUICK_NAV_PREFERRED=['myTasks','dashboard','control','finalInspection'];
+var QUICK_NAV_PREFERRED=['dashboard','control','finalInspection'];
 function buildMobileQuickNav(){
   var bar=el('div',{className:'mobile-quicknav'});
   var accessible=NAV_PAGES.filter(function(p){ return userHasPageAccess(p.key); });
