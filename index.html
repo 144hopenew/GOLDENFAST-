@@ -958,12 +958,28 @@ var ordersNeedRoundReconcile=false;
 function pruneOrphanRoundOrders(orders){
   if(!orders||!orders.length) return orders||[];
   var byId={}; orders.forEach(function(o){ byId[o.id]=o; });
+  // ย้ายรอบเก่าที่สร้างก่อนมี sourceShipmentId ให้ผูกกับรายการรับกลับจริงเพียงครั้งเดียว
+  // ถ้าหาคู่ไม่ได้ แปลว่าเป็นรอบทดลอง/ข้อมูลซ้ำที่ไม่มีต้นทางแล้ว จึงต้องไม่ค้างเป็นการ์ดงาน
+  orders.filter(function(o){ return !o.roundOfOrderId; }).forEach(function(parent){
+    var outProc=(parent.processes||[]).find(function(p){ return isOutsourceProc(p); });
+    if(!outProc) return;
+    var receives=(outProc.shipments||[]).filter(function(s){ return s.type==='receive'; });
+    var used={};
+    orders.filter(function(o){ return o.roundOfOrderId===parent.id&&o.sourceShipmentId; }).forEach(function(o){ used[o.sourceShipmentId]=true; });
+    orders.filter(function(o){ return o.roundOfOrderId===parent.id&&!o.sourceShipmentId; }).forEach(function(round){
+      var receipt=receives.find(function(s){
+        var dateToken='วันที่รับ '+fmtShort(s.date);
+        var qtyMatches=(parseFloat(round.roundBoxQty)||0)===(parseFloat(s.qty)||0);
+        return !used[s.id]&&qtyMatches&&(round.note||'').indexOf(dateToken)>=0;
+      });
+      if(receipt){ round.sourceShipmentId=receipt.id; used[receipt.id]=true; ordersNeedRoundReconcile=true; }
+    });
+  });
   var cleaned=orders.filter(function(o){
     if(!o.roundOfOrderId) return true;
     var parent=byId[o.roundOfOrderId];
     if(!parent) return false;
-    // รองรับรอบเก่าที่ไม่มี sourceShipmentId ไว้ก่อน แต่รอบใหม่ทุกใบต้องมีต้นทางที่ยังอยู่จริง
-    if(!o.sourceShipmentId) return true;
+    if(!o.sourceShipmentId) return false;
     var outProc=(parent.processes||[]).find(function(p){ return isOutsourceProc(p); });
     return !!(outProc&&(outProc.shipments||[]).some(function(s){ return s.id===o.sourceShipmentId&&s.type==='receive'; }));
   });
