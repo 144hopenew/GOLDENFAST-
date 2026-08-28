@@ -988,8 +988,13 @@ function pruneOrphanRoundOrders(orders){
 }
 function renumberOutsourceRounds(parentOrder){
   if(!parentOrder) return;
+  var outProc=(parentOrder.processes||[]).find(function(p){ return isOutsourceProc(p); });
+  var receiveDate={};
+  (outProc&&outProc.shipments||[]).forEach(function(s){ if(s.type==='receive') receiveDate[s.id]=s.date||''; });
   var roundNo=0;
-  state.orders.filter(function(o){ return o.roundOfOrderId===parentOrder.id; }).forEach(function(o){ o.roundNo=++roundNo; });
+  state.orders.filter(function(o){ return o.roundOfOrderId===parentOrder.id; }).sort(function(a,b){
+    return (receiveDate[a.sourceShipmentId]||'').localeCompare(receiveDate[b.sourceShipmentId]||'');
+  }).forEach(function(o){ o.roundNo=++roundNo; });
 }
 // ซิงก์ผลตรวจที่เคยทำไว้แล้วกลับไปยังประวัติ "รับกลับ" เสมอ
 function reconcileOutsourceRoundStatus(){
