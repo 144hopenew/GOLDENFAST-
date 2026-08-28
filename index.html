@@ -1709,6 +1709,15 @@ function statusOf(order,idx){
   return 'pending';
 }
 function orderOverallStatus(order){
+  // ออเดอร์แม่ที่ส่ง Outsource หลายรอบ ให้ใช้ผลรวมของรอบย่อยเป็นสถานะจริง
+  // ไม่ปล่อยให้ขั้นตอนแม่ที่ไม่ได้ใช้จริงมาทำให้ Dashboard นับงานค้างผิด
+  if(isOutsourceRoundManagedParent(order)){
+    var childRounds=state.orders.filter(function(o){ return o.roundOfOrderId===order.id; });
+    var childStatuses=childRounds.map(function(o){ return orderOverallStatus(o); });
+    if(childStatuses.indexOf('delayed')>=0) return 'delayed';
+    if(childRounds.length&&childStatuses.every(function(s){ return s==='completed'||s==='completed-late'; })) return childStatuses.indexOf('completed-late')>=0?'completed-late':'completed';
+    return 'progress';
+  }
   var pending=getPendingIndex(order);
   var statuses=order.processes.map(function(_,i){ return statusOf(order,i); });
   if(statuses.indexOf('ng')>=0) return 'delayed';
@@ -6013,6 +6022,11 @@ function roundAwaitingFinalDecision(order){
   var receipt=outProc&&(outProc.shipments||[]).find(function(s){ return s.id===order.sourceShipmentId&&s.type==='receive'; });
   return !!(receipt&&(!receipt.judged||order.needsFinalDecision));
 }
+// ออเดอร์แม่ของ Outsource ใช้เพียงเก็บยอดส่ง-รับ; เมื่อมีรอบรับกลับแล้ว QC ต้องตัดสินบนการ์ด "รอบ" เท่านั้น
+// ห้ามให้การ์ดแม่โผล่ในหน้าตรวจสำเร็จอีก มิฉะนั้นจะถูกประเมินซ้ำกับของจริง
+function isOutsourceRoundManagedParent(order){
+  return !!(order&&!order.roundOfOrderId&&state.orders.some(function(o){ return o.roundOfOrderId===order.id; }));
+}
 function roundBadgeEl(o){
   if(!o.roundNo) return null;
   return el('span',{style:'font-size:10px;font-weight:800;padding:2px 8px;border-radius:5px;background:var(--gold-dim);color:var(--gold);margin-left:6px;'},['รอบ '+o.roundNo+(o.roundBoxQty?(' ('+fmtNum(o.roundBoxQty)+' ลัง'+(o.roundBoxWeight?(' / '+fmtNum(o.roundBoxWeight)+' กก.'):'')+')'):'')]);
@@ -6129,7 +6143,7 @@ function splitOrderForward(order,procIdx,onSuccess){
 function renderProcessTable(procTable,thName,tcName,key,opts){
   opts=opts||{}; if(!procTable) return; procTable.innerHTML='';
   var showDone=!!state.procShowDone[key];
-  var items=[]; state.orders.forEach(function(o){ var idx=o.processes.findIndex(function(p){return p.name.indexOf(thName)>=0||p.name.indexOf(tcName)>=0;}); if(idx<0) return; var legacyPending=(key==='finalInspection'&&roundAwaitingFinalDecision(o)); if(!stepReached(o,idx)&&!legacyPending) return; var st=legacyPending?'progress':statusOf(o,idx); if(!showDone&&isDoneStatus(st)) return;
+  var items=[]; state.orders.forEach(function(o){ if(key==='finalInspection'&&isOutsourceRoundManagedParent(o)) return; var idx=o.processes.findIndex(function(p){return p.name.indexOf(thName)>=0||p.name.indexOf(tcName)>=0;}); if(idx<0) return; var legacyPending=(key==='finalInspection'&&roundAwaitingFinalDecision(o)); if(!stepReached(o,idx)&&!legacyPending) return; var st=legacyPending?'progress':statusOf(o,idx); if(!showDone&&isDoneStatus(st)) return;
     // ตัวกรองเดือนไม่เหมาะกับงานที่ยังค้างอยู่หลังกระบวนการ Outsource (lead time ของ Outsource ยาว/ไม่แน่นอน ทำให้ของไปถึงขั้นตอนหลังๆ ข้ามเดือนไปจากวันลงออเดอร์ได้เสมอ)
     // เลยให้ทุกหน้าหลัง Outsource (ตรวจสำเร็จ/คัดขนาด/คัดกรอง/ไนล่อน/แพ็ค/เข้าคลัง — opts.postOutsource) โชว์งานที่ยังไม่เสร็จเสมอ ไม่ว่าจะเปิดดูเดือนไหนอยู่ พองานเสร็จแล้วค่อยกลับไปยึดเดือนตามปกติ (ไม่โผล่ค้างเป็นลิสต์ยาวไม่รู้จบ)
     if(opts.postOutsource){
