@@ -952,16 +952,59 @@ function fixNylonSortingOrder(order){
   var planDates=computeSchedule(order.processes,order.dueDate||todayStr());
   order.processes.forEach(function(p,i){ if(!p.actualDate){ p.planDate=planDates[i]; p.planStart=(i===0)?(order.orderDate||order.dueDate):dateToStr(addDays(strToDate(planDates[i-1]),1)); } });
 }
-// ล้าง "รอบ" (round orders) ที่กลายเป็นเศษข้อมูลค้าง เพราะออเดอร์ต้นทางถูกลบไปแล้ว (เช่น ลบจากใบแจ้งผลิตในเวอร์ชันเก่าที่ยังไม่ลบรอบย่อยตาม) — ให้เอาออกอัตโนมัติทุกครั้งที่โหลดข้อมูล
+// ล้าง "รอบ" (round orders) ที่กลายเป็นเศษข้อมูลค้าง เพราะออเดอร์ต้นทาง หรือรายการรับกลับต้นทางถูกลบไปแล้ว
+// รอบตรวจสอบที่สร้างจากการ "รับกลับ" ต้องอ้างถึง sourceShipmentId เสมอ จึงห้ามปล่อยให้การ์ดรอบนั้นค้างอยู่เอง
+var ordersNeedRoundReconcile=false;
 function pruneOrphanRoundOrders(orders){
-  if(!orders||!orders.length) return orders;
-  var ids={}; orders.forEach(function(o){ ids[o.id]=true; });
-  return orders.filter(function(o){ return !o.roundOfOrderId || ids[o.roundOfOrderId]; });
+  if(!orders||!orders.length) return orders||[];
+  var byId={}; orders.forEach(function(o){ byId[o.id]=o; });
+  var cleaned=orders.filter(function(o){
+    if(!o.roundOfOrderId) return true;
+    var parent=byId[o.roundOfOrderId];
+    if(!parent) return false;
+    // รองรับรอบเก่าที่ไม่มี sourceShipmentId ไว้ก่อน แต่รอบใหม่ทุกใบต้องมีต้นทางที่ยังอยู่จริง
+    if(!o.sourceShipmentId) return true;
+    var outProc=(parent.processes||[]).find(function(p){ return isOutsourceProc(p); });
+    return !!(outProc&&(outProc.shipments||[]).some(function(s){ return s.id===o.sourceShipmentId&&s.type==='receive'; }));
+  });
+  if(cleaned.length!==orders.length) ordersNeedRoundReconcile=true;
+  return cleaned;
+}
+function renumberOutsourceRounds(parentOrder){
+  if(!parentOrder) return;
+  var roundNo=0;
+  state.orders.filter(function(o){ return o.roundOfOrderId===parentOrder.id; }).forEach(function(o){ o.roundNo=++roundNo; });
+}
+// ซิงก์ผลตรวจที่เคยทำไว้แล้วกลับไปยังประวัติ "รับกลับ" เสมอ
+function reconcileOutsourceRoundStatus(){
+  var changed=false;
+  state.orders.filter(function(o){ return !o.roundOfOrderId; }).forEach(function(parent){
+    var outProc=(parent.processes||[]).find(function(p){ return isOutsourceProc(p); });
+    if(!outProc) return;
+    var rounds=state.orders.filter(function(o){ return o.roundOfOrderId===parent.id; });
+    renumberOutsourceRounds(parent);
+    (outProc.shipments||[]).forEach(function(entry){
+      if(entry.type!=='receive') return;
+      var round=rounds.find(function(o){ return o.sourceShipmentId===entry.id; });
+      var finalProc=round&&round.processes&&round.processes[0];
+      var result=null;
+      if(finalProc){
+        if(finalProc.qcResult==='NG') result='NG';
+        else if(finalProc.qcResult==='SCRAP') result='SCRAP';
+        else if(finalProc.qcResult==='OK'||finalProc.actualDate) result='OK';
+      }
+      var judged=!!result;
+      if(entry.judged!==judged||entry.judgedResult!==(result||null)){
+        entry.judged=judged; entry.judgedResult=result; changed=true;
+      }
+    });
+  });
+  return changed;
 }
 function cloudApplyKey(key,value){
   switch(key){
     case 'master': state.master=value||JSON.parse(JSON.stringify(DEFAULT_MASTER)); if(typeof auditSnap==='function') auditSnap('master',state.master); break;
-    case 'orders': state.orders=pruneOrphanRoundOrders(value||[]); state.orders.forEach(fixNylonSortingOrder); if(typeof auditSnap==='function') auditSnap('orders',state.orders); break;
+    case 'orders': state.orders=pruneOrphanRoundOrders(value||[]); if(reconcileOutsourceRoundStatus()) ordersNeedRoundReconcile=true; state.orders.forEach(fixNylonSortingOrder); if(typeof auditSnap==='function') auditSnap('orders',state.orders); break;
     case 'products': state.products=value||JSON.parse(JSON.stringify(DEFAULT_PRODUCTS)); if(typeof auditSnap==='function') auditSnap('products',state.products); break;
     case 'customers': state.customers=value||JSON.parse(JSON.stringify(DEFAULT_CUSTOMERS)); if(typeof auditSnap==='function') auditSnap('customers',state.customers); break;
     case 'users':
@@ -1227,6 +1270,8 @@ function loadState(){
   if(s){ if(s.currentPage) state.currentPage=s.currentPage; if(s.currentMonth!==undefined) state.currentMonth=s.currentMonth; if(s.currentYear) state.currentYear=s.currentYear; if(s.filters) state.filters=s.filters; }
   ensureFinalInspectionData();
   ensureSizeSortingData();
+  // บันทึกการซ่อมข้อมูลครั้งเดียวกลับขึ้นคลาวด์ เพื่อให้ทุกคนเห็นยอดรอบและสถานะเดียวกัน
+  if(ordersNeedRoundReconcile){ ordersNeedRoundReconcile=false; saveOrders(); }
   auditInitSnapshots();
   auditReady=true;
   state.loaded=true; render();
@@ -5903,7 +5948,18 @@ function renderShipmentLogBlock(card,p,rerenderFn,order){
       tr.appendChild(el('td',{style:'padding:5px 8px;color:var(--text-dim);'},[entry.note||'-']));
       var delTd=el('td',{style:'padding:5px 8px;text-align:right;'});
       var delBtn=el('button',{style:'border:none;background:none;color:var(--red);cursor:pointer;font-size:11px;'},['ลบ']);
-      delBtn.addEventListener('click',function(){ if(!confirm('ลบรายการนี้?')) return; p.shipments=p.shipments.filter(function(e){return e.id!==entry.id;}); saveOrders(); rerenderFn(); });
+      delBtn.addEventListener('click',function(){
+        var isReceive=entry.type==='receive';
+        var linkedRounds=isReceive?state.orders.filter(function(o){ return o.roundOfOrderId===order.id&&o.sourceShipmentId===entry.id; }):[];
+        var msg='ลบรายการนี้?';
+        if(linkedRounds.length) msg+=' จะลบรอบตรวจสอบสำเร็จที่สร้างจากการรับกลับนี้ '+linkedRounds.length+' รอบด้วย เพื่อไม่ให้ข้อมูลค้าง';
+        if(!confirm(msg)) return;
+        p.shipments=p.shipments.filter(function(e){ return e.id!==entry.id; });
+        if(linkedRounds.length) state.orders=state.orders.filter(function(o){ return !(o.roundOfOrderId===order.id&&o.sourceShipmentId===entry.id); });
+        renumberOutsourceRounds(order);
+        reconcileOutsourceRoundStatus();
+        saveOrders(); rerenderFn();
+      });
       delTd.appendChild(delBtn); tr.appendChild(delTd);
       tbody.appendChild(tr);
     });
@@ -5981,9 +6037,24 @@ function renderProcessTable(procTable,thName,tcName,key,opts){
     }
     if(state.filters.searchQuery&&!orderMatchesQuery(o,state.filters.searchQuery)) return; var p_=o.processes[idx]; if(!matchesDateQuery([p_.planStart,p_.planDate,p_.actualDate,o.orderDate,o.dueDate])) return; items.push({order:o,proc:o.processes[idx],idx:idx,status:st}); });
   if(items.length===0){ procTable.appendChild(el('div',{className:'panel',style:'text-align:center;padding:30px;color:var(--text-dim);'},[showDone?('ไม่พบงาน / 未找到工作 — '+thName):('🎉 ไม่มีงานค้าง — '+thName+' (งานที่เสร็จแล้วถูกซ่อนไว้ ติ๊ก "แสดงงานที่เสร็จแล้ว" ด้านบนเพื่อดู/ยกเลิก)')])); return; }
-  var list=el('div',{});
+  // งานค้างอยู่ด้านบนเสมอ; งานเสร็จแยกเป็นประวัติด้านล่างและเรียงล่าสุดก่อน
+  items.sort(function(a,b){
+    var aDone=isDoneStatus(a.status), bDone=isDoneStatus(b.status);
+    if(aDone!==bDone) return aDone?1:-1;
+    var ad=(aDone?a.proc.actualDate:(a.proc.planDate||a.order.dueDate))||'';
+    var bd=(bDone?b.proc.actualDate:(b.proc.planDate||b.order.dueDate))||'';
+    return aDone?bd.localeCompare(ad):ad.localeCompare(bd);
+  });
+  var list=el('div',{}),currentGroup='';
   items.forEach(function(item){
     var o=item.order,p=item.proc;
+    var group=isDoneStatus(item.status)?'done':'pending';
+    if(group!==currentGroup){
+      currentGroup=group;
+      var heading=group==='pending'?'งานค้างที่ต้องจัดการ / 待處理':'งานเสร็จแล้ว (ประวัติ) / 已完成';
+      var sub=group==='pending'?(opts.postOutsource?'รวมทุกเดือน':'ตามเดือนที่เลือก'):(state.procDoneMonth[key]?'เดือนที่เสร็จ: '+state.procDoneMonth[key]:'เรียงจากล่าสุด');
+      list.appendChild(el('div',{style:'margin:16px 0 8px;padding:8px 12px;border-radius:8px;background:'+(group==='pending'?'var(--amber-dim)':'var(--green-dim)')+';color:'+(group==='pending'?'var(--amber)':'var(--green)')+';font-size:12.5px;font-weight:800;'},[heading+' — '+sub]));
+    }
     var card=el('div',{className:'proc-item-card',style:'border-left:3px solid '+STATUS_COLOR[item.status]+';'});
     var top=el('div',{className:'proc-item-top'});
     var topL=el('div',{style:'display:flex;flex-wrap:wrap;align-items:center;gap:8px;'});
@@ -6309,8 +6380,9 @@ function outsourceRoundsSummary(parentOrder){
   var passed=0,ng=0,pending=0,passedBoxQty=0;
   rounds.forEach(function(r){
     var fi=r.processes[0];
-    if(fi&&fi.actualDate){ passed++; passedBoxQty+=(r.roundBoxQty||0); }
-    else if(fi&&fi.qcResult==='NG'){ ng++; }
+    if(fi&&fi.qcResult==='NG'){ ng++; }
+    else if(fi&&fi.qcResult==='SCRAP'){ /* ตัดสินแล้ว แต่ไม่ใช่งานผ่าน */ }
+    else if(fi&&fi.actualDate){ passed++; passedBoxQty+=(r.roundBoxQty||0); }
     else pending++;
   });
   return {totalRounds:rounds.length,passed:passed,ng:ng,pending:pending,passedBoxQty:passedBoxQty};
