@@ -1291,6 +1291,8 @@ function loadState(){
   if(s){ if(s.currentPage) state.currentPage=s.currentPage; if(s.currentMonth!==undefined) state.currentMonth=s.currentMonth; if(s.currentYear) state.currentYear=s.currentYear; if(s.filters) state.filters=s.filters; }
   ensureFinalInspectionData();
   ensureSizeSortingData();
+  if(normalizeRoundProcessRoutes()) ordersNeedRoundReconcile=true;
+  if(closeResolvedOutsourceOrders()) ordersNeedRoundReconcile=true;
   // บันทึกการซ่อมข้อมูลครั้งเดียวกลับขึ้นคลาวด์ เพื่อให้ทุกคนเห็นยอดรอบและสถานะเดียวกัน
   if(ordersNeedRoundReconcile){ ordersNeedRoundReconcile=false; saveOrders(); }
   auditInitSnapshots();
@@ -1312,7 +1314,8 @@ function ensureFinalInspectionData(){
   }
   var changed=false;
   (state.orders||[]).forEach(function(o){
-    if(!o.processes) return;
+    // รอบรับกลับเริ่มที่ตรวจสำเร็จอยู่แล้ว ห้ามย้ายไปท้ายเส้นทางทุกครั้งที่โหลด
+    if(!o.processes||o.roundOfOrderId) return;
     var finalIdx=o.processes.findIndex(isFinal);
     var proc=finalIdx>=0?o.processes.splice(finalIdx,1)[0]:null;
     var outIdx=o.processes.findIndex(isOut);
@@ -1339,7 +1342,8 @@ function ensureSizeSortingData(){
   }
   var changed=false;
   (state.orders||[]).forEach(function(o){
-    if(!o.processes) return;
+    // รอบรับกลับต้องรักษาลำดับ ตรวจสำเร็จ → คัดขนาด → ขั้นตอนถัดไป
+    if(!o.processes||o.roundOfOrderId) return;
     var szIdx=o.processes.findIndex(isSz);
     var proc=szIdx>=0?o.processes.splice(szIdx,1)[0]:null;
     var finalIdx=o.processes.findIndex(isFinal);
@@ -1351,6 +1355,37 @@ function ensureSizeSortingData(){
     changed=true;
   });
   if(changed) saveOrders();
+}
+// ซ่อมรอบรับกลับเก่าที่เคยถูกย้ายขั้นตอนผิด: ให้เรียงตามเส้นทางจริงของ master
+// โดยรักษาผลตรวจและข้อมูลที่บันทึกแล้วของแต่ละขั้นตอนไว้ทั้งหมด
+function normalizeRoundProcessRoutes(){
+  var rank={};
+  (state.master||[]).forEach(function(p,i){ rank[p.id]=i; rank[p.name]=i; });
+  var changed=false;
+  (state.orders||[]).filter(function(o){ return o.roundOfOrderId&&o.processes&&o.processes.length; }).forEach(function(o){
+    var before=o.processes.map(function(p){ return p.id; }).join('|');
+    o.processes.sort(function(a,b){
+      var ar=rank[a.masterId]; if(ar===undefined) ar=rank[a.name]; if(ar===undefined) ar=9999;
+      var br=rank[b.masterId]; if(br===undefined) br=rank[b.name]; if(br===undefined) br=9999;
+      return ar-br;
+    });
+    if(before!==o.processes.map(function(p){ return p.id; }).join('|')) changed=true;
+  });
+  return changed;
+}
+// เมื่อรับกลับครบและผลตรวจของทุกรอบตัดสินแล้ว ให้ปิด Outsource โดยอัตโนมัติทันที
+// ไม่ต้องรอให้ผู้ใช้เปิดหน้า Outsource ก่อน จึงส่งงานต่อไปคัดขนาดได้เสมอ
+function closeResolvedOutsourceOrders(){
+  var changed=false;
+  (state.orders||[]).filter(function(o){ return !o.roundOfOrderId; }).forEach(function(o){
+    var idx=(o.processes||[]).findIndex(function(p){ return isOutsourceProc(p); });
+    if(idx<0) return;
+    var p=o.processes[idx], totals=outsourceBoxStatus(p);
+    if(!p.actualDate&&totals.sent>0&&totals.sent===totals.received&&outsourceAllRoundsResolved(o)){
+      p.actualDate=todayStr(); changed=true;
+    }
+  });
+  return changed;
 }
 // ══════════ Audit Log Engine ══════════
 // บันทึกทุกการแก้ไขข้อมูล: ใคร / แก้อะไร / เวลาไหน / ค่าเดิม→ค่าใหม่ โดยเปรียบเทียบข้อมูลก่อน-หลังบันทึกทุกครั้งโดยอัตโนมัติ
@@ -4974,6 +5009,7 @@ function renderDashboard(container){
   var totalDays=state.master.reduce(function(a,p){return a+p.days;},0);
   grid.appendChild(makeCard('Lead Time รวม','總週期',totalDays,'var(--teal)','วัน / 天'));
   container.appendChild(grid);
+  renderCompletedOrderSummaries(container,monthOrders);
   var recentPanel=el('div',{className:'panel'});
   var recentHdr=el('div',{style:'display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;'});
   var recentHdrL=el('div',{});
@@ -5016,6 +5052,43 @@ function renderDashboard(container){
     table.appendChild(tbody); tw.appendChild(table); recentPanel.appendChild(tw);
   }
   container.appendChild(recentPanel);
+}
+// การ์ดสรุปงานที่เสร็จครบทุกกระบวนการ: จำนวน น้ำหนัก และเวลาที่ใช้จริงรายขั้นตอน
+function orderSummaryWeight(order){
+  var weighted=(order.processes||[]).filter(function(p){ return p.weight!==null&&p.weight!==undefined&&p.weight!==''; }).pop();
+  if(weighted) return parseFloat(weighted.weight)||0;
+  var unit=productUnitWeight(order);
+  return unit&&order.quantity?Math.round(unit*order.quantity/1000*100)/100:null;
+}
+function actualProcessDays(order,idx){
+  var p=order.processes[idx];
+  if(!p||!p.actualDate) return null;
+  var started=p.planStart||((idx>0&&order.processes[idx-1].actualDate)||order.orderDate);
+  return started?Math.max(1,diffDays(started,p.actualDate)+1):null;
+}
+function renderCompletedOrderSummaries(container,orders){
+  var completed=(orders||[]).filter(function(o){ return !o.roundOfOrderId&&isOrderClosed(o); }).sort(function(a,b){ return (completedOrderDate(b)||'').localeCompare(completedOrderDate(a)||''); });
+  if(!completed.length) return;
+  var section=el('div',{className:'panel',style:'margin-top:16px;'});
+  section.appendChild(el('div',{className:'panel-title'},['📋 สรุปออเดอร์ที่เสร็จแล้ว / 已完成訂單摘要']));
+  section.appendChild(el('div',{className:'panel-subtitle'},['จำนวน น้ำหนัก และระยะเวลาจริงของทุกกระบวนการ — เรียงงานที่จบล่าสุด']));
+  completed.forEach(function(o){
+    var card=el('div',{style:'margin-top:12px;padding:14px;border:1px solid var(--line);border-left:4px solid var(--green);border-radius:10px;background:var(--bg-panel-alt);'});
+    var top=el('div',{style:'display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;'});
+    top.appendChild(el('div',{},[el('div',{className:'mono',style:'font-size:15px;font-weight:800;'},[o.orderNo]),el('div',{style:'font-size:12px;color:var(--text-mid);margin-top:3px;'},[(o.productCode?o.productCode+' · ':'')+(o.productName||'-')+(o.lotNo?' · ล็อต '+o.lotNo:'')])]));
+    top.appendChild(el('div',{style:'font-size:12px;font-weight:800;color:var(--green);'},['✓ เสร็จ '+fmtShort(completedOrderDate(o))]));
+    card.appendChild(top);
+    var weight=orderSummaryWeight(o), firstDate=(o.processes||[]).map(function(p){ return p.planStart||p.actualDate; }).filter(Boolean).sort()[0]||o.orderDate, lastDate=completedOrderDate(o), totalUse=firstDate&&lastDate?Math.max(1,diffDays(firstDate,lastDate)+1):null;
+    var facts=el('div',{style:'display:flex;gap:14px;flex-wrap:wrap;margin:10px 0;padding:8px 10px;border-radius:7px;background:var(--bg-panel);font-size:12px;'});
+    facts.appendChild(el('span',{},['จำนวน: ',el('b',{className:'mono'},[fmtNum(o.quantity||0)])]));
+    facts.appendChild(el('span',{},['น้ำหนัก: ',el('b',{className:'mono'},[weight===null?'-':fmtNum(weight)+' กก.'])]));
+    facts.appendChild(el('span',{},['ใช้รวม: ',el('b',{className:'mono'},[totalUse===null?'-':totalUse+' วัน'])]));
+    card.appendChild(facts);
+    var steps=el('div',{style:'display:flex;flex-wrap:wrap;gap:6px;'});
+    (o.processes||[]).forEach(function(p,i){ var days=actualProcessDays(o,i),label=(p.name||'-').split(' / ')[0]; steps.appendChild(el('span',{style:'padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg-panel);font-size:11px;color:'+(p.actualDate?'var(--green)':'var(--text-dim)')+';'},[(p.actualDate?'✓ ':'○ ')+label+' · '+(days===null?'-':days+' วัน')+(p.actualDate?' ('+fmtShort(p.actualDate)+')':'')])); });
+    section.appendChild(card);
+  });
+  container.appendChild(section);
 }
 function miniStepperEl(order,activeIdx,onClick){
   var wrap=el('div',{className:'mini-stepper'});
@@ -6422,7 +6495,10 @@ function outsourceRoundsSummary(parentOrder){
 function outsourceAllRoundsResolved(parentOrder){
   var rounds=state.orders.filter(function(o){ return o.roundOfOrderId===parentOrder.id; });
   if(!rounds.length) return false;
-  return rounds.every(function(r){ var fi=r.processes[0]; return !!(fi&&(fi.actualDate||fi.qcResult==='NG')); });
+  return rounds.every(function(r){
+    var fi=finalInspectionProcOf(r);
+    return !!(fi&&!roundAwaitingFinalDecision(r)&&(fi.actualDate||fi.qcResult==='NG'||fi.qcResult==='SCRAP'));
+  });
 }
 // แถบแสดงความคืบหน้าแบบเห็นภาพชัดๆ ของ Outsource — ส่งไปกี่ลัง รับกลับแล้วกี่ลัง เหลือค้างที่โรงชุบกี่ลัง
 function renderOutsourceProgressBar(bst){
