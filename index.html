@@ -6227,12 +6227,12 @@ function splitOrderForward(order,procIdx,onSuccess){
 function renderProcessTable(procTable,thName,tcName,key,opts){
   opts=opts||{}; if(!procTable) return; procTable.innerHTML='';
   var showDone=!!state.procShowDone[key];
+  // หน้าที่ไม่ใช่หลัง Outsource ยึดเดือนของออเดอร์แม่เสมอ (ตามหน้าใบแจ้งการผลิต) — หน้าหลัง Outsource
+  // (postOutsource) ค่าเริ่มต้นโชว์งานค้างทุกเดือนไว้ก่อนเสมอ เพราะงานที่กลับมาจาก Outsource มักมาข้าม
+  // เดือนจากวันลงออเดอร์เดิม กรองตามเดือนเฉพาะตอนติ๊กเปิด "กรองเฉพาะเดือนออเดอร์แม่ที่เลือก" เท่านั้น
+  // ("รอบย่อย" ที่แยกจากการรับ Outsource บางส่วน — roundOfOrderId — ที่ยังไม่เสร็จ ก็ยกเว้นเสมอไม่ว่าโหมดไหน)
+  var monthFilterActive=!opts.postOutsource||!!state.procMonthFilterOn[key];
   var items=[]; state.orders.forEach(function(o){ if(key==='finalInspection'&&isOutsourceRoundManagedParent(o)) return; var idx=o.processes.findIndex(function(p){return p.name.indexOf(thName)>=0||p.name.indexOf(tcName)>=0;}); if(idx<0) return; var legacyPending=(key==='finalInspection'&&roundAwaitingFinalDecision(o)); if(!stepReached(o,idx)&&!legacyPending) return; var st=legacyPending?'progress':statusOf(o,idx); if(!showDone&&isDoneStatus(st)) return;
-    // หน้าที่ไม่ใช่หลัง Outsource ยึดเดือนของออเดอร์แม่เสมอ (ตามหน้าใบแจ้งการผลิต) — หน้าหลัง Outsource
-    // (postOutsource) ค่าเริ่มต้นโชว์งานค้างทุกเดือนไว้ก่อนเสมอ เพราะงานที่กลับมาจาก Outsource มักมาข้าม
-    // เดือนจากวันลงออเดอร์เดิม กรองตามเดือนเฉพาะตอนติ๊กเปิด "กรองเฉพาะเดือนออเดอร์แม่ที่เลือก" เท่านั้น
-    // ("รอบย่อย" ที่แยกจากการรับ Outsource บางส่วน — roundOfOrderId — ที่ยังไม่เสร็จ ก็ยกเว้นเสมอไม่ว่าโหมดไหน)
-    var monthFilterActive=!opts.postOutsource||!!state.procMonthFilterOn[key];
     if(monthFilterActive){
       var skipMonthFilter=!!o.roundOfOrderId&&!isDoneStatus(st);
       if(!skipMonthFilter){ var monthD=strToDate(o.orderDate||o.dueDate); if(!monthD||monthD.getFullYear()!==state.currentYear||monthD.getMonth()!==state.currentMonth) return; }
