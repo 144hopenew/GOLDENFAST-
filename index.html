@@ -3,6 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Security headers this static host (GitHub Pages) can actually accept via <meta> —
+     X-Frame-Options, X-Content-Type-Options, and Permissions-Policy need a real HTTP
+     response header and GitHub Pages does not let a site set custom ones, so those three
+     cannot be fixed from this file; they need a host with header control (Netlify /
+     Cloudflare Pages / Vercel) or a Cloudflare reverse proxy with a header-injection rule. -->
+<!-- script-src needs 'unsafe-inline': the whole app's logic is one inline <script> block
+     in this file (not an external .js), so a strict script-src blocks the entire app from
+     running at all. This CSP still meaningfully restricts WHERE things can load from/send
+     to (blocks loading scripts or connecting to any host other than those listed below),
+     it just can't also block inline-script-based XSS the way a hash/nonce setup could. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; base-uri 'self'; form-action 'self'; object-src 'none'">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <title>GDF — Production Management</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111827'/%3E%3Ctext x='32' y='43' text-anchor='middle' font-size='38'%3E%F0%9F%94%A9%3C/text%3E%3C/svg%3E">
 <link rel="shortcut icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111827'/%3E%3Ctext x='32' y='43' text-anchor='middle' font-size='38'%3E%F0%9F%94%A9%3C/text%3E%3C/svg%3E">
@@ -1126,6 +1138,13 @@ function fetchCloudState(){
   return sbClient.from(CLOUD_TABLE).select('key,value').then(function(res){
     if(res.error){ console.error('Cloud fetch error',res.error); return; }
     (res.data||[]).forEach(function(row){ cloudCache[row.key]=row.value; });
+  }).then(function(){
+    // key='users' ไม่ได้อยู่ใน pct_state ที่ query ตรงๆ ได้อีกต่อไป (ปิดไว้ทาง RLS กันรหัสผ่านหลุด)
+    // ต้องอ่านผ่าน get_safe_users() ซึ่งตัด password ออกให้ก่อนส่งมาแทน
+    return sbClient.rpc('get_safe_users').then(function(res2){
+      if(res2.error){ console.error('get_safe_users error',res2.error); return; }
+      cloudCache.users=res2.data||[];
+    }).catch(function(e){ console.error('get_safe_users error',e); });
   }).catch(function(e){ console.error('Cloud fetch error',e); }).then(function(){ cloudReady=true; });
 }
 function cloudSave(key,value){
@@ -8670,9 +8689,19 @@ function initLogin(){
       loginError.style.display='block'; return;
     }
     loginBtn.classList.add('loading'); loginBtn.disabled=true;
-    setTimeout(function(){
-      var users=cloudCache.users||DEFAULT_USERS;
-      var found=users.find(function(x){ return x.username===u&&x.password===p; });
+    // เช็ค username/password ฝั่งเซิร์ฟเวอร์ผ่าน verify_login() แทนการดึงรหัสผ่านทุกคนมาเทียบในเครื่อง —
+    // ฟังก์ชันนี้คืนกลับมาแค่ id/name/username/role เท่านั้น ไม่มีทางเห็น password ของใครเลย
+    // (ออฟไลน์/ไม่ได้ต่อ Supabase ยังใช้ DEFAULT_USERS ในเครื่องได้เหมือนเดิมสำหรับทดสอบ)
+    var verifyPromise = sbClient
+      ? sbClient.rpc('verify_login',{p_username:u,p_password:p}).then(function(res){
+          if(res.error){ console.error('verify_login error',res.error); return null; }
+          return (res.data&&res.data.length)?res.data[0]:null;
+        }).catch(function(e){ console.error('verify_login error',e); return null; })
+      : new Promise(function(resolve){ setTimeout(function(){
+          var found=DEFAULT_USERS.find(function(x){ return x.username===u&&x.password===p; });
+          resolve(found||null);
+        },500); });
+    verifyPromise.then(function(found){
       loginBtn.classList.remove('loading'); loginBtn.disabled=false;
       if(!found){
         loginError.textContent='ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง / 帳號或密碼錯誤';
@@ -8692,7 +8721,7 @@ function initLogin(){
         document.getElementById('pct-root').classList.remove('hidden');
         loadState();
       },reduceMotion2?220:560);
-    },500);
+    });
   }
   loginBtn.addEventListener('click',function(e){ e.preventDefault(); doLogin(); });
   document.getElementById('login-pass').addEventListener('keydown',function(e){ if(e.key==='Enter') doLogin(); });
