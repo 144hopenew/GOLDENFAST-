@@ -13,7 +13,7 @@
      running at all. This CSP still meaningfully restricts WHERE things can load from/send
      to (blocks loading scripts or connecting to any host other than those listed below),
      it just can't also block inline-script-based XSS the way a hash/nonce setup could. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; base-uri 'self'; form-action 'self'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; manifest-src blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; base-uri 'self'; form-action 'self'; object-src 'none'">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <title>GDF — Production Management</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111827'/%3E%3Ctext x='32' y='43' text-anchor='middle' font-size='38'%3E%F0%9F%94%A9%3C/text%3E%3C/svg%3E">
@@ -203,6 +203,8 @@ html[data-theme="dark"] .panel,html[data-theme="dark"] .dashboard-card,html[data
   transition:border-color .2s;width:100%
 }
 .login-field input:focus,.login-field select:focus{outline:none;border-color:var(--accent)}
+.login-remember{display:flex;align-items:center;gap:7px;margin:2px 0 12px;cursor:pointer;font-size:11.5px;color:var(--text-mid)}
+.login-remember input{width:14px;height:14px;accent-color:var(--accent);cursor:pointer;flex-shrink:0}
 .login-btn{
   width:100%;background:var(--accent);
   border:1.5px solid var(--accent);color:var(--bg-panel);font-weight:700;border-radius:var(--radius-sm);
@@ -620,6 +622,10 @@ select,input[type="text"],input[type="number"],input[type="date"]{min-height:34p
           <option value="warehouse">คลังสินค้า / 倉庫</option>
         </select>
       </div>
+      <label class="login-remember">
+        <input type="checkbox" id="login-remember">
+        <span>จดจำรหัสผ่าน / 記住密碼</span>
+      </label>
       <button class="login-btn" id="login-btn">
         <span class="login-btn-inner">
           <span class="login-spinner"></span>
@@ -8654,10 +8660,23 @@ function buildGlobalSearchEl(){
   document.addEventListener('click',function(e){ if(!wrap.contains(e.target)) dd.classList.remove('show'); });
   return wrap;
 }
+var STORAGE_REMEMBER_LOGIN='pct:rememberLogin';
 function initLogin(){
   var loginBtn=document.getElementById('login-btn');
   var loginError=document.getElementById('login-error');
   loginBtn.classList.remove('loading');
+
+  // จดจำรหัสผ่าน — เติมช่องให้อัตโนมัติถ้าเคยติ๊กไว้ (เก็บในเครื่องนี้เท่านั้น ไม่ได้ส่งขึ้นคลาวด์)
+  var rememberCb=document.getElementById('login-remember');
+  try{
+    var remembered=sg(STORAGE_REMEMBER_LOGIN,null);
+    if(remembered&&remembered.u){
+      document.getElementById('login-user').value=remembered.u;
+      document.getElementById('login-pass').value=remembered.p||'';
+      if(remembered.r) document.getElementById('login-role').value=remembered.r;
+      rememberCb.checked=true;
+    }
+  }catch(e){}
 
   var tiltBox=document.getElementById('login-box-tilt');
   if(tiltBox){
@@ -8713,6 +8732,10 @@ function initLogin(){
         loginError.style.color=''; loginError.style.display='block'; return;
       }
       state.currentUser={id:found.id,name:found.name,username:found.username,role:found.role||r};
+      try{
+        if(rememberCb&&rememberCb.checked) ss(STORAGE_REMEMBER_LOGIN,{u:u,p:p,r:r});
+        else localStorage.removeItem(STORAGE_REMEMBER_LOGIN);
+      }catch(e){}
       var ls=document.getElementById('login-screen');
       var reduceMotion2=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       tiltBox.classList.add('tearing');
