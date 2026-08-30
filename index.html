@@ -1176,8 +1176,17 @@ function isUserEditing(){
 }
 function applyRemoteUpdate(key,value){ cloudApplyKey(key,value); render(); }
 // หมายเหตุ: เดิมตรงนี้เคยมีแบนเนอร์แจ้งเตือน "มีข้อมูลใหม่จากเครื่องอื่น" เด้งขึ้นมาอัตโนมัติเวลามีคนแก้ข้อมูลจากเครื่องอื่น
-// ตอนนี้เอาการแจ้งเตือน/การโหลดอัตโนมัติออกแล้วตามที่ขอ — ข้อมูลใหม่จากเครื่องอื่นจะเงียบๆ รอไว้ก่อน
-// (ไม่รบกวนขณะพิมพ์) แล้วจะเข้ามาแทนที่ก็ต่อเมื่อผู้ใช้รีเฟรช/เข้าหน้าใหม่เท่านั้น
+// เอาแบนเนอร์ออกไปแล้วตามที่เคยขอ (ไม่รบกวนขณะพิมพ์) แต่ไม่เคยต่อระบบ "เงียบๆ แล้วค่อยแทนที่" ให้ทำงานจริง —
+// ก่อนหน้านี้ _pendingRemoteUpdates เก็บข้อมูลไว้เฉยๆ ไม่มีใครมาดึงไปใช้เลย ต้องรีเฟรชเองถึงจะเห็นข้อมูลใหม่
+// ด้านล่างนี้คือจุดที่ทำให้มันทำงานจริง: เช็คทุก 3 วิ ถ้ามีข้อมูลใหม่ค้างอยู่และผู้ใช้ไม่ได้กำลังพิมพ์อยู่ในช่องไหน
+// (เช็คจาก isUserEditing) ก็ค่อยใส่เข้า state แล้ว render() ให้เห็นแบบเรียลไทม์จริงๆ ตามที่ระบบตั้งใจไว้แต่แรก
+setInterval(function(){
+  if(!state.loaded||isUserEditing()) return;
+  var keys=Object.keys(_pendingRemoteUpdates);
+  if(!keys.length) return;
+  keys.forEach(function(k){ cloudApplyKey(k,_pendingRemoteUpdates[k]); delete _pendingRemoteUpdates[k]; });
+  render();
+},3000);
 function subscribeRealtime(){
   if(!sbClient||realtimeSubscribed) return;
   realtimeSubscribed=true;
