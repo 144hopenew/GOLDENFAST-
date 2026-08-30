@@ -1656,7 +1656,11 @@ function saveUsers(){
 // key นั้นไม่เคยอยู่ในหน้าเว็บเลย ฟังก์ชันนี้แค่ส่ง token ของ session ปัจจุบันไปให้ Edge Function ตรวจสอบสิทธิ์เอง
 function callAuthFunction(payload){
   if(!sbClient) return Promise.reject(new Error('ไม่ได้เชื่อมต่อ Supabase (โหมดออฟไลน์ทำรายการนี้ไม่ได้)'));
-  return sbClient.auth.getSession().then(function(sres){
+  // รีเฟรช session ก่อนเรียกทุกครั้ง กัน token หมดอายุ (อายุแค่ 1 ชม. บางทีระบบรีเฟรชอัตโนมัติไม่ทัน)
+  // ถ้า refresh ไม่ผ่านจริงๆ (ล็อกอินมานานเกินไป) ค่อย fallback ไปใช้ session เดิมที่มีอยู่
+  return sbClient.auth.refreshSession().catch(function(){ return null; }).then(function(){
+    return sbClient.auth.getSession();
+  }).then(function(sres){
     var token=sres&&sres.data&&sres.data.session&&sres.data.session.access_token;
     if(!token) return Promise.reject(new Error('เซสชันหมดอายุ กรุณาล็อกอินใหม่'));
     return fetch(SB_URL+'/functions/v1/create-employee',{
@@ -1897,9 +1901,8 @@ function orderPendingAtFlowStep(order,step){
   if(idx<0) return false;
   if(!stepReached(order,idx)) return false;
   if(step.mode==='atVendor'){ return computeShipmentTotals(order.processes[idx].shipments||[]).atVendor>0; }
-  // กันนับซ้อน: กรณีหัว+เกลียวทำพร้อมกันหน้างาน (เกลียวถือว่า "ถึงคิว" ไปด้วยทั้งที่หัวยังไม่เสร็จ) ให้นับออเดอร์นี้ไว้ที่สถานี "หัว" อย่างเดียวสำหรับยอดค้างรวม/แผนที่โรงงาน จะได้ไม่นับ 1 ออเดอร์ซ้อนเป็น 2 สถานี
-  var pendingIdx=getPendingIndex(order);
-  if(idx!==pendingIdx&&isThreadProc(order.processes[idx])&&idx>0&&isHeadProc(order.processes[idx-1])&&(idx-1)===pendingIdx) return false;
+  // หัว/เกลียว ทำพร้อมกันหน้างานจริง — ออเดอร์ที่ยังไม่เสร็จหัว แต่ถึงคิวเกลียวแล้ว (stepReached ผ่าน)
+  // ให้นับค้างอยู่ทั้ง 2 โซนพร้อมกันได้เลย ตามที่หน้างานทำงานจริง ไม่ต้องกันนับซ้อน
   return !isDoneStatus(statusOf(order,idx));
 }
 // นับงานที่ค้างอยู่จริง ณ ตอนนี้ในแต่ละพื้นที่ ไม่จำกัดเดือน — ใช้กับ Factory Digital Map (Phase 5) ที่ต้องการภาพรวมทั้งโรงงานแบบ real-time
