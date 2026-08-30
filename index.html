@@ -1156,6 +1156,17 @@ function fetchCloudState(){
 function cloudSave(key,value){
   cloudCache[key]=value;
   if(!sbClient){ if(typeof toast==='function') toast('⚠️ ไม่ได้เชื่อมต่อ Supabase — ข้อมูลบันทึกไว้ในเครื่องนี้เท่านั้น / 未連接雲端','error'); return Promise.resolve(); }
+  // key='users' ถูกกันไม่ให้ SELECT อ่านกลับได้ (RLS กันรหัสผ่านรั่ว) — และ Postgres มีกติกาว่า
+  // UPDATE/DELETE จะแก้แถวไหนได้ แถวนั้นต้อง "มองเห็นได้" ผ่าน SELECT policy ก่อนเสมอ ต่อให้
+  // UPDATE policy จะเปิดกว้างแค่ไหนก็ตาม พอเราบล็อก SELECT ของ key นี้ไว้ UPDATE ธรรมดาเลยมองไม่เห็น
+  // แถวนี้ไปด้วย (เขียนไป 0 แถวเงียบๆ ไม่ error) จึงต้องใช้ RPC แบบเดียวกับ verify_login/get_safe_users
+  // (SECURITY DEFINER ข้าม RLS ได้เพราะรันด้วยสิทธิ์เจ้าของฟังก์ชัน) เขียนแทนโดยเฉพาะ key นี้
+  if(key==='users'){
+    return sbClient.rpc('save_users_safe',{p_value:value}).then(function(res){
+      if(res.error){ console.error('Cloud save error ['+key+']',res.error); if(typeof toast==='function') toast('⚠️ บันทึกขึ้น Supabase ไม่สำเร็จ ('+key+')','error'); return Promise.reject(res.error); }
+      return {};
+    }).catch(function(e){ console.error('Cloud save error ['+key+']',e); if(typeof toast==='function') toast('⚠️ บันทึกขึ้น Supabase ไม่สำเร็จ ('+key+')','error'); return Promise.reject(e); });
+  }
   return sbClient.from(CLOUD_TABLE).upsert({key:key,value:value,updated_at:new Date().toISOString()}).then(function(res){
     if(res.error){ console.error('Cloud save error ['+key+']',res.error); if(typeof toast==='function') toast('⚠️ บันทึกขึ้น Supabase ไม่สำเร็จ ('+key+') กรุณาตรวจสอบอินเทอร์เน็ต / 雲端同步失敗','error'); return Promise.reject(res.error); }
     return res;
@@ -1640,6 +1651,20 @@ function saveUsers(){
   if(auditReady){ var _prevUsers=_auditSnap.users; deferAudit(function(){ auditDiffArray('ผู้ใช้งาน / 用戶',function(x){return x.name+' (@'+x.username+')';},_prevUsers,state.users,USER_FIELDS); }); }
   auditSnap('users',state.users);
   return cloudSave('users',state.users);
+}
+// เรียก Edge Function สำหรับงานที่ต้องใช้ service_role key (สร้างบัญชี Auth ใหม่ / เปลี่ยนรหัสผ่าน)
+// key นั้นไม่เคยอยู่ในหน้าเว็บเลย ฟังก์ชันนี้แค่ส่ง token ของ session ปัจจุบันไปให้ Edge Function ตรวจสอบสิทธิ์เอง
+function callAuthFunction(payload){
+  if(!sbClient) return Promise.reject(new Error('ไม่ได้เชื่อมต่อ Supabase (โหมดออฟไลน์ทำรายการนี้ไม่ได้)'));
+  return sbClient.auth.getSession().then(function(sres){
+    var token=sres&&sres.data&&sres.data.session&&sres.data.session.access_token;
+    if(!token) return Promise.reject(new Error('เซสชันหมดอายุ กรุณาล็อกอินใหม่'));
+    return fetch(SB_URL+'/functions/v1/create-employee',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+      body:JSON.stringify(payload)
+    }).then(function(r){ return r.json().then(function(j){ if(!r.ok||j.error) throw new Error(j.error||'เกิดข้อผิดพลาด'); return j; }); });
+  });
 }
 function saveMonthlyReport(){ ss(STORAGE_MONTHLY_REPORT,state.monthlyReport||{}); return cloudSave('monthlyReport',state.monthlyReport||{}); }
 function saveMachineUtil(){ ss(STORAGE_MACHINE_UTIL,state.machineUtil||{}); ss(STORAGE_MACHINE_UTIL+'_wd',state.machineUtilWorkdays||{}); cloudSave('machineUtil',state.machineUtil||{}); return cloudSave('machineUtilWorkdays',state.machineUtilWorkdays||{}); }
@@ -8319,18 +8344,35 @@ function showUserModal(user){
     if(!isEdit&&state.users.find(function(u2){return u2.username===uIn.value.trim();})){ toast('ชื่อผู้ใช้ซ้ำ กรุณาใช้ชื่อใหม่','error'); return; }
     var pagePerms={};
     ALL_PAGE_KEYS.forEach(function(k){ var lv=permSelects[k].value; if(lv!=='none') pagePerms[k]=lv; });
-    var data={id:user?user.id:uid(),name:nIn.value.trim()||uIn.value.trim(),username:uIn.value.trim(),role:rSel.value,pagePerms:pagePerms};
-    if(pIn.value.trim()) data.password=pIn.value.trim(); else if(isEdit) data.password=user.password;
+    var newId=user?user.id:uid();
+    var data={id:newId,name:nIn.value.trim()||uIn.value.trim(),username:uIn.value.trim(),role:rSel.value,pagePerms:pagePerms};
+    // หมายเหตุ: ไม่เก็บ password ใน state.users อีกต่อไป — รหัสผ่านจริงอยู่ใน Supabase Auth เท่านั้น
+    // (สร้างบัญชีใหม่ / เปลี่ยนรหัสผ่าน ทำผ่าน Edge Function ที่ถือ service_role key แทน ปลอดภัยกว่าเดิมมาก)
     var backupUsers=state.users.slice();
-    if(isEdit){ var idx=state.users.findIndex(function(x){return x.id===user.id;}); if(idx>=0) state.users[idx]=data; }
-    else { state.users=state.users.concat([data]); }
+    var newPassword=pIn.value.trim();
     sb.disabled=true; sb.textContent='กำลังบันทึก... / 保存中...'; cb.disabled=true;
-    Promise.resolve(saveUsers()).then(function(){
+
+    var authStep;
+    if(!sbClient){
+      authStep=Promise.resolve(); // โหมดออฟไลน์/ทดสอบ ไม่มี Supabase Auth ให้เรียก ข้ามขั้นตอนนี้
+    } else if(!isEdit){
+      authStep=callAuthFunction({action:'create',username:data.username,password:newPassword,appUserId:newId});
+    } else if(newPassword){
+      authStep=callAuthFunction({action:'resetPassword',appUserId:newId,password:newPassword});
+    } else {
+      authStep=Promise.resolve();
+    }
+
+    authStep.then(function(){
+      if(isEdit){ var idx=state.users.findIndex(function(x){return x.id===user.id;}); if(idx>=0) state.users[idx]=data; }
+      else { state.users=state.users.concat([data]); }
+      return saveUsers();
+    }).then(function(){
       overlay.remove(); render(); toast((isEdit?'แก้ไข':'เพิ่ม')+'ผู้ใช้สำเร็จ','success');
     }).catch(function(err){
       state.users=backupUsers;
       sb.disabled=false; sb.textContent=sbLabel; cb.disabled=false;
-      toast('บันทึกไม่สำเร็จ กรุณาลองใหม่ / 保存失敗，請重試','error');
+      toast('บันทึกไม่สำเร็จ: '+(err&&err.message?err.message:'กรุณาลองใหม่'),'error');
       console.error('saveUsers failed',err);
     });
   });
@@ -8717,14 +8759,22 @@ function initLogin(){
       loginError.style.display='block'; return;
     }
     loginBtn.classList.add('loading'); loginBtn.disabled=true;
-    // เช็ค username/password ฝั่งเซิร์ฟเวอร์ผ่าน verify_login() แทนการดึงรหัสผ่านทุกคนมาเทียบในเครื่อง —
-    // ฟังก์ชันนี้คืนกลับมาแค่ id/name/username/role เท่านั้น ไม่มีทางเห็น password ของใครเลย
+    // ล็อกอินผ่าน Supabase Auth จริง (username ผูกกับอีเมลปลอม username@gdf.local ภายใน)
+    // ผ่านแล้วหา id เดิมในระบบ (state.users) ผ่านตาราง profiles (สะพานเชื่อม auth uid <-> id เดิม)
+    // แล้วดึงรายละเอียด name/role/pagePerms เต็มๆ จาก get_safe_users() (ไม่มี password หลุดมาเลย)
     // (ออฟไลน์/ไม่ได้ต่อ Supabase ยังใช้ DEFAULT_USERS ในเครื่องได้เหมือนเดิมสำหรับทดสอบ)
     var verifyPromise = sbClient
-      ? sbClient.rpc('verify_login',{p_username:u,p_password:p}).then(function(res){
-          if(res.error){ console.error('verify_login error',res.error); return null; }
-          return (res.data&&res.data.length)?res.data[0]:null;
-        }).catch(function(e){ console.error('verify_login error',e); return null; })
+      ? sbClient.auth.signInWithPassword({email:u.toLowerCase()+'@gdf.local',password:p}).then(function(res){
+          if(res.error||!res.data||!res.data.user){ return null; }
+          var authId=res.data.user.id;
+          return sbClient.from('profiles').select('app_user_id').eq('id',authId).single().then(function(pres){
+            if(pres.error||!pres.data) return null;
+            return sbClient.rpc('get_safe_users').then(function(ures){
+              if(ures.error||!ures.data) return null;
+              return ures.data.find(function(x){ return x.id===pres.data.app_user_id; })||null;
+            });
+          });
+        }).catch(function(e){ console.error('login error',e); return null; })
       : new Promise(function(resolve){ setTimeout(function(){
           var found=DEFAULT_USERS.find(function(x){ return x.username===u&&x.password===p; });
           resolve(found||null);
